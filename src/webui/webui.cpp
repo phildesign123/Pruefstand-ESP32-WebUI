@@ -1,0 +1,459 @@
+#include "webui.h"
+#include "../config.h"
+#include "../hotend/hotend.h"
+#include "../load_cell/load_cell.h"
+#include "../motor/motor.h"
+#include "../datalog/datalog.h"
+#include "sequencer.h"
+
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+#include <LittleFS.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+// =============================================================
+// Web-UI: ESPAsyncWebServer + WebSocket + REST-API
+// Frontend aus LittleFS (/data-Partition)
+// =============================================================
+
+static AsyncWebServer  s_server(WEBUI_PORT);
+static AsyncWebSocket  s_ws(WEBUI_WS_PATH);
+
+// ── WebSocket-Push-Task (10 Hz) ──────────────────────────────
+
+static void ws_push_task(void *arg) {
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(WEBUI_WS_INTERVAL_MS));
+        if (s_ws.count() == 0) continue;
+
+        // Kompaktes JSON zusammenstellen
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "{\"t\":%lu,\"temp\":%.2f,\"temp_target\":%.2f,\"duty\":%.3f,"
+            "\"weight\":%.3f,\"speed\":%.2f,\"motor\":%d,"
+            "\"seq\":%d,\"seq_state\":\"%s\"}",
+            (unsigned long)millis(),
+            hotend_get_temperature(),
+            hotend_get_target(),
+            hotend_get_duty(),
+            load_cell_get_weight_g(),
+            motor_get_current_speed(),
+            motor_is_moving() ? 1 : 0,
+            sequencer_get_active_index(),
+            sequencer_state_string());
+
+        s_ws.textAll(buf);
+    }
+}
+
+// ── WebSocket Befehlsverarbeitung ────────────────────────────
+
+static void on_ws_message(AsyncWebSocketClient *client,
+                           const char *data, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, data, len) != DeserializationError::Ok) return;
+
+    const char *cmd = doc["cmd"];
+    if (!cmd) return;
+
+    if (strcmp(cmd, "set_target") == 0) {
+        float v = doc["value"] | 0.0f;
+        hotend_set_target(v);
+    } else if (strcmp(cmd, "motor_jog") == 0) {
+        float  dist  = doc["dist"]  | 1.0f;
+        float  speed = doc["speed"] | 3.0f;
+        MotorDir dir = (strcmp(doc["dir"] | "fwd", "rev") == 0)
+                       ? MOTOR_DIR_REVERSE : MOTOR_DIR_FORWARD;
+        motor_move_distance(speed, dist, dir);
+    } else if (strcmp(cmd, "motor_stop") == 0) {
+        motor_stop();
+    } else if (strcmp(cmd, "tare") == 0) {
+        load_cell_tare();
+    }
+}
+
+static void on_ws_event(AsyncWebSocket *server, AsyncWebSocketClient *client,
+                         AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_DATA) {
+        AwsFrameInfo *info = (AwsFrameInfo *)arg;
+        if (info->opcode == WS_TEXT) {
+            data[len] = 0;
+            on_ws_message(client, (char *)data, len);
+        }
+    } else if (type == WS_EVT_CONNECT) {
+        Serial.printf("[WS] Client #%u verbunden\n", client->id());
+    } else if (type == WS_EVT_DISCONNECT) {
+        Serial.printf("[WS] Client #%u getrennt\n", client->id());
+    }
+}
+
+// ── REST-API Handler ─────────────────────────────────────────
+
+// --- Hotend ---
+static void api_hotend_get(AsyncWebServerRequest *req) {
+    JsonDocument doc;
+    doc["temp"]       = hotend_get_temperature();
+    doc["target"]     = hotend_get_target();
+    doc["duty"]       = hotend_get_duty();
+    doc["fault"]      = (int)hotend_get_fault();
+    doc["fault_str"]  = hotend_get_fault_string();
+    char buf[256];
+    serializeJson(doc, buf);
+    req->send(200, "application/json", buf);
+}
+
+static void api_hotend_set_target(AsyncWebServerRequest *req,
+                                   JsonVariant &body) {
+    float t = body["target_c"] | -1.0f;
+    if (t < 0 || !hotend_set_target(t))
+        req->send(400, "application/json", "{\"error\":\"invalid\"}");
+    else
+        req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_hotend_set_pid(AsyncWebServerRequest *req,
+                                JsonVariant &body) {
+    hotend_set_pid(body["kp"] | DEFAULT_Kp,
+                   body["ki"] | DEFAULT_Ki,
+                   body["kd"] | DEFAULT_Kd);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_hotend_clear_fault(AsyncWebServerRequest *req) {
+    hotend_clear_fault();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+// --- Wägezelle ---
+static void api_loadcell_get(AsyncWebServerRequest *req) {
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"weight_g\":%.3f,\"raw\":%ld,\"calibrated\":%s}",
+             load_cell_get_weight_g(),
+             (long)load_cell_get_raw(),
+             load_cell_is_calibrated() ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+static void api_loadcell_tare(AsyncWebServerRequest *req) {
+    load_cell_tare();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_loadcell_cal(AsyncWebServerRequest *req, JsonVariant &body) {
+    float w = body["weight_g"] | 0.0f;
+    if (w <= 0 || !load_cell_calibrate(w))
+        req->send(400, "application/json", "{\"error\":\"invalid\"}");
+    else
+        req->send(200, "application/json", "{\"ok\":true}");
+}
+
+// --- Motor ---
+static void api_motor_status(AsyncWebServerRequest *req) {
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"moving\":%s,\"speed_mm_s\":%.2f,\"steps_per_mm\":%.2f,\"calibrated\":%s}",
+             motor_is_moving() ? "true" : "false",
+             motor_get_current_speed(),
+             motor_get_esteps(),
+             motor_esteps_is_calibrated() ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+static void api_motor_move(AsyncWebServerRequest *req, JsonVariant &body) {
+    float speed = body["speed"] | 3.0f;
+    float dur   = body["duration_s"] | 0.0f;
+    MotorDir dir = (strcmp(body["dir"] | "fwd", "rev") == 0)
+                   ? MOTOR_DIR_REVERSE : MOTOR_DIR_FORWARD;
+    motor_move(speed, dur, dir);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_move_dist(AsyncWebServerRequest *req, JsonVariant &body) {
+    float speed = body["speed"] | 3.0f;
+    float dist  = body["distance_mm"] | 0.0f;
+    MotorDir dir = (strcmp(body["dir"] | "fwd", "rev") == 0)
+                   ? MOTOR_DIR_REVERSE : MOTOR_DIR_FORWARD;
+    motor_move_distance(speed, dist, dir);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_stop(AsyncWebServerRequest *req) {
+    motor_stop();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_set_current(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_current(body["run_ma"] | 800, body["hold_ma"] | 400);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_set_microstep(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_microstep(body["microstep"] | 16);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_set_stealthchop(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_stealthchop(body["enable"] | true);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_set_interpolation(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_interpolation(body["enable"] | true);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_get_esteps(AsyncWebServerRequest *req) {
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"steps_per_mm\":%.2f,\"valid\":%s}",
+             motor_get_esteps(), motor_esteps_is_calibrated() ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+static void api_motor_set_esteps(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_esteps(body["steps_per_mm"] | MOTOR_E_STEPS_PER_MM);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_cal_start(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_calibrate_start(body["distance_mm"] | 100.0f, body["speed"] | 3.0f);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_motor_cal_apply(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_calibrate_apply(body["remaining_mm"] | 0.0f);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+// --- Datenlogger ---
+static void api_datalog_status(AsyncWebServerRequest *req) {
+    const char *states[] = {"idle","recording","paused","error"};
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"state\":\"%s\",\"file\":\"%s\",\"interval_ms\":%lu}",
+             states[(int)datalog_get_state()],
+             datalog_get_filename(),
+             (unsigned long)DATALOG_INTERVAL_MS);
+    req->send(200, "application/json", buf);
+}
+
+static void api_datalog_start(AsyncWebServerRequest *req, JsonVariant &body) {
+    uint32_t iv = body["interval_ms"] | (uint32_t)DATALOG_INTERVAL_MS;
+    datalog_start(iv);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_datalog_stop(AsyncWebServerRequest *req) {
+    datalog_stop();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_datalog_files(AsyncWebServerRequest *req) {
+    DatalogFileInfo files[50];
+    int n = datalog_list_files(files, 50);
+    JsonDocument doc;
+    JsonArray arr = doc["files"].to<JsonArray>();
+    for (int i = 0; i < n; i++) {
+        JsonObject o = arr.add<JsonObject>();
+        o["name"]  = files[i].name;
+        o["size"]  = files[i].size_bytes;
+        o["date"]  = files[i].date_str;
+        o["active"] = (strcmp(files[i].name, datalog_get_filename()) == 0);
+    }
+    char buf[2048];
+    serializeJson(doc, buf);
+    req->send(200, "application/json", buf);
+}
+
+static void api_datalog_download(AsyncWebServerRequest *req) {
+    String name = req->pathArg(0);
+    char path[72];
+    snprintf(path, sizeof(path), "/%s", name.c_str());
+
+    // Streaming-Download mit ChunkedResponse
+    AsyncWebServerResponse *resp =
+        req->beginChunkedResponse("text/csv",
+            [name](uint8_t *buf, size_t max, size_t offset) -> size_t {
+                size_t read = 0;
+                datalog_read_chunk(name.c_str(), offset, buf, max, &read);
+                return read;
+            });
+    resp->addHeader("Content-Disposition",
+                    ("attachment; filename=\"" + name + "\"").c_str());
+    req->send(resp);
+}
+
+static void api_datalog_delete(AsyncWebServerRequest *req) {
+    String name = req->pathArg(0);
+    datalog_delete_file(name.c_str());
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_datalog_delete_all(AsyncWebServerRequest *req, JsonVariant &body) {
+    if (body["confirm"] | false) datalog_delete_all();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_datalog_sdinfo(AsyncWebServerRequest *req) {
+    DatalogSDInfo info;
+    datalog_get_sd_info(&info);
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"total\":%llu,\"free\":%llu,\"mounted\":%s}",
+             info.total_bytes, info.free_bytes,
+             info.mounted ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+// --- Sequencer ---
+static void api_seq_get(AsyncWebServerRequest *req) {
+    JsonDocument doc;
+    doc["state"]  = sequencer_state_string();
+    doc["active"] = sequencer_get_active_index();
+    JsonArray arr = doc["sequences"].to<JsonArray>();
+    for (int i = 0; i < sequencer_count(); i++) {
+        Sequence s; sequencer_get(i, &s);
+        JsonObject o = arr.add<JsonObject>();
+        o["temp_c"]     = s.temperature_c;
+        o["speed_mm_s"] = s.speed_mm_s;
+        o["duration_s"] = s.duration_s;
+    }
+    char buf[1024];
+    serializeJson(doc, buf);
+    req->send(200, "application/json", buf);
+}
+
+static void api_seq_add(AsyncWebServerRequest *req, JsonVariant &body) {
+    sequencer_add(body["temp_c"] | 200.0f,
+                  body["speed_mm_s"] | 3.0f,
+                  body["duration_s"] | 60.0f);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_seq_start(AsyncWebServerRequest *req) {
+    if (!sequencer_start())
+        req->send(400, "application/json", "{\"error\":\"cannot start\"}");
+    else
+        req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_seq_stop(AsyncWebServerRequest *req) {
+    sequencer_stop();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_seq_clear(AsyncWebServerRequest *req) {
+    sequencer_clear();
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_seq_delete(AsyncWebServerRequest *req, JsonVariant &body) {
+    int idx = body["index"] | -1;
+    if (!sequencer_delete(idx))
+        req->send(400, "application/json", "{\"error\":\"invalid index\"}");
+    else
+        req->send(200, "application/json", "{\"ok\":true}");
+}
+
+// ── Routen registrieren ──────────────────────────────────────
+
+static void register_routes() {
+    // Statische Dateien aus LittleFS
+    s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+
+    // WebSocket
+    s_ws.onEvent(on_ws_event);
+    s_server.addHandler(&s_ws);
+
+    // Hotend
+    s_server.on("/api/hotend", HTTP_GET, api_hotend_get);
+    s_server.on("/api/hotend/clear_fault", HTTP_POST, api_hotend_clear_fault);
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/hotend/target",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_hotend_set_target(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/hotend/pid",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_hotend_set_pid(r, b); }));
+
+    // Wägezelle
+    s_server.on("/api/loadcell", HTTP_GET, api_loadcell_get);
+    s_server.on("/api/loadcell/tare", HTTP_POST, [](AsyncWebServerRequest *r){ api_loadcell_tare(r); });
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/loadcell/cal",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_loadcell_cal(r, b); }));
+
+    // Motor
+    s_server.on("/api/motor/status", HTTP_GET, api_motor_status);
+    s_server.on("/api/motor/stop",   HTTP_POST, [](AsyncWebServerRequest *r){ api_motor_stop(r); });
+    s_server.on("/api/motor/esteps", HTTP_GET, api_motor_get_esteps);
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/move",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_move(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/move_dist",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_move_dist(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/current",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_current(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/microstep",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_microstep(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/stealthchop",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_stealthchop(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/interpolation",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_interpolation(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/esteps",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_esteps(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/cal/start",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_cal_start(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/cal/apply",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_cal_apply(r, b); }));
+
+    // Datenlogger
+    s_server.on("/api/datalog/status", HTTP_GET, api_datalog_status);
+    s_server.on("/api/datalog/stop",   HTTP_POST, [](AsyncWebServerRequest *r){ api_datalog_stop(r); });
+    s_server.on("/api/datalog/files",  HTTP_GET, api_datalog_files);
+    s_server.on("/api/datalog/sdinfo", HTTP_GET, api_datalog_sdinfo);
+    s_server.on("^\\/api\\/datalog\\/files\\/(.+)$", HTTP_GET, api_datalog_download);
+    s_server.on("^\\/api\\/datalog\\/files\\/(.+)$", HTTP_DELETE,
+                [](AsyncWebServerRequest *r){ api_datalog_delete(r); });
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/datalog/start",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_datalog_start(r, b); }));
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/datalog/delete_all",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_datalog_delete_all(r, b); }));
+
+    // Sequencer
+    s_server.on("/api/sequence",       HTTP_GET,  api_seq_get);
+    s_server.on("/api/sequence/start", HTTP_POST, [](AsyncWebServerRequest *r){ api_seq_start(r); });
+    s_server.on("/api/sequence/stop",  HTTP_POST, [](AsyncWebServerRequest *r){ api_seq_stop(r); });
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/add",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_add(r, b); }));
+    s_server.on("/api/sequence/clear",  HTTP_POST, [](AsyncWebServerRequest *r){ api_seq_clear(r); });
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/delete",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_delete(r, b); }));
+
+    s_server.onNotFound([](AsyncWebServerRequest *req) {
+        req->send(404, "text/plain", "Not Found");
+    });
+}
+
+// ── Öffentliche API ──────────────────────────────────────────
+
+void webui_init() {
+    // Wi-Fi als Access Point
+    WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
+    Serial.printf("[WIFI] AP: %s  IP: %s\n",
+                  WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+
+    // LittleFS mounten (Frontend-Dateien)
+    if (!LittleFS.begin()) {
+        Serial.println("[WEBUI] LittleFS nicht gefunden – Web-Frontend fehlt!");
+    }
+
+    register_routes();
+    s_server.begin();
+    Serial.printf("[WEBUI] HTTP-Server läuft auf Port %d\n", WEBUI_PORT);
+
+    // WebSocket-Push-Task starten
+    xTaskCreatePinnedToCore(ws_push_task, "ws_push", TASK_STACK_WS_PUSH,
+                            nullptr, TASK_PRIO_WS_PUSH, nullptr, tskNO_AFFINITY);
+}
+
+void webui_notify_clients(const char *json) {
+    if (s_ws.count() > 0) s_ws.textAll(json);
+}

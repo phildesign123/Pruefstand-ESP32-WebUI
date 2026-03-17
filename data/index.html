@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prüfstand ESP32</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav>
+  <span class="logo">⚙ Prüfstand</span>
+  <a href="#" class="active" onclick="showPage('dashboard',this)">Dashboard</a>
+  <a href="#" onclick="showPage('settings',this)">Einstellungen</a>
+  <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
+</nav>
+
+<main>
+<!-- ════════════ DASHBOARD ════════════ -->
+<div id="page-dashboard" class="page active">
+
+  <div class="grid2" style="margin-bottom:16px">
+
+    <!-- Temperatur-Karte -->
+    <div class="card">
+      <div class="card-title">Temperatur</div>
+      <div class="big-val" id="temp-val">–<span class="unit"> °C</span></div>
+      <div class="sub">Soll: <span id="temp-target">–</span> °C &nbsp;|&nbsp;
+           Duty: <span id="temp-duty">–</span> %</div>
+      <div id="fault-box" style="display:none;margin-top:8px">
+        <span class="badge err" id="fault-text">–</span>
+        <button class="danger" style="margin-left:8px" onclick="clearFault()">Reset</button>
+      </div>
+      <div class="input-row">
+        <input type="number" id="set-temp-in" min="0" max="299" step="1" placeholder="Soll °C">
+        <button onclick="setTarget()">Setzen</button>
+        <button class="secondary" onclick="setTargetVal(0)">AUS</button>
+      </div>
+    </div>
+
+    <!-- Kraft-Karte -->
+    <div class="card">
+      <div class="card-title">Kraft / Gewicht</div>
+      <div class="big-val" id="weight-val">–<span class="unit"> g</span></div>
+      <div class="sub" id="motor-status">Motor: AUS</div>
+      <div style="margin-top:10px">
+        <button onclick="tare()">Tarieren</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Motor-Jog -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Motor – Manuelle Steuerung</div>
+    <div class="jog-row">
+      <button onclick="jog(-10)">◄◄ −10</button>
+      <button onclick="jog(-5)">◄ −5</button>
+      <button onclick="jog(-2)">◄ −2</button>
+      <button onclick="jog(-1)">◄ −1</button>
+      <button onclick="jog(1)">+1 ►</button>
+      <button onclick="jog(2)">+2 ►</button>
+      <button onclick="jog(5)">+5 ►</button>
+      <button onclick="jog(10)">+10 ►►</button>
+    </div>
+    <div class="input-row">
+      <span style="color:var(--text-dim)">Geschw.:</span>
+      <input type="number" id="jog-speed" value="3" min="0.1" max="10" step="0.1"> mm/s
+      <button class="danger" onclick="motorStop()">⏹ STOP</button>
+    </div>
+  </div>
+
+  <!-- Live-Chart -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="display:flex;align-items:center;gap:10px">
+      Live-Diagramm (10 Hz)
+      <select id="chart-window" onchange="updateChartWindow()" style="margin-left:auto">
+        <option value="10">10 s</option>
+        <option value="30" selected>30 s</option>
+        <option value="60">60 s</option>
+        <option value="300">5 min</option>
+      </select>
+      <label style="font-size:12px"><input type="checkbox" id="show-temp" checked onchange="updateSeries()"> Temp</label>
+      <label style="font-size:12px"><input type="checkbox" id="show-weight" checked onchange="updateSeries()"> Kraft</label>
+      <label style="font-size:12px"><input type="checkbox" id="show-speed" checked onchange="updateSeries()"> Speed</label>
+    </div>
+    <div id="chart-wrap"></div>
+  </div>
+
+  <!-- Messreihen -->
+  <div class="card">
+    <div class="card-title">Messreihen</div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Temp (°C)</th><th>Speed (mm/s)</th>
+          <th>Dauer (s)</th><th>Status</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="seq-table"></tbody>
+    </table>
+    <div class="input-row">
+      <input type="number" id="seq-temp" placeholder="°C" min="20" max="299" step="1" style="width:70px">
+      <input type="number" id="seq-speed" placeholder="mm/s" min="0.1" max="10" step="0.1" style="width:70px">
+      <input type="number" id="seq-dur" placeholder="s" min="1" max="3600" step="1" style="width:70px">
+      <button onclick="seqAdd()">+ Hinzufügen</button>
+    </div>
+    <div class="input-row" style="margin-top:10px">
+      <button onclick="seqStart()">▶ Starten</button>
+      <button class="danger" onclick="seqStop()">⏹ Stoppen</button>
+      <button class="secondary" onclick="seqClear()">🗑 Alle löschen</button>
+    </div>
+  </div>
+</div><!-- /dashboard -->
+
+<!-- ════════════ EINSTELLUNGEN ════════════ -->
+<div id="page-settings" class="page">
+
+  <!-- Wägezelle -->
+  <div class="section">
+    <div class="section-title">Wägezelle</div>
+    <div class="setting-row">
+      <span class="setting-label">Aktuell:</span>
+      <strong id="s-weight">–</strong> g &nbsp;|&nbsp;
+      Rohwert: <span id="s-raw">–</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Kalibrierung:</span>
+      <span id="s-cal-state" class="badge">–</span>
+    </div>
+    <div class="setting-row">
+      <button onclick="tare()">Tarieren</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Referenzgewicht:</span>
+      <input type="number" id="cal-weight" placeholder="g" min="1" style="width:80px">
+      <button onclick="calibrateLoadCell()">Kalibrieren</button>
+      <span id="cal-status"></span>
+    </div>
+  </div>
+
+  <!-- E-Steps -->
+  <div class="section">
+    <div class="section-title">E-Steps Kalibrierung</div>
+    <div class="setting-row">
+      <span class="setting-label">Aktuell:</span>
+      <span id="s-esteps">–</span> Steps/mm
+      <span id="s-esteps-state" class="badge" style="margin-left:6px">–</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Schritt 1:</span>
+      Filament markieren. Referenzstrecke:
+      <input type="number" id="cal-dist" value="100" style="width:65px"> mm &nbsp;
+      Speed: <input type="number" id="cal-speed-e" value="3" style="width:55px"> mm/s
+      <button onclick="estepCalStart()">Extrudieren</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Schritt 2:</span>
+      Verbleibend:
+      <input type="number" id="cal-remaining" placeholder="mm" style="width:70px">
+      <button onclick="estepCalApply()">Übernehmen</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Manuell:</span>
+      <input type="number" id="s-esteps-manual" placeholder="Steps/mm" style="width:100px">
+      <button onclick="estepSetManual()">Setzen</button>
+    </div>
+  </div>
+
+  <!-- TMC2208 -->
+  <div class="section">
+    <div class="section-title">TMC2208 Motor-Konfiguration</div>
+    <div class="setting-row">
+      <span class="setting-label">Fahrstrom:</span>
+      <input type="number" id="m-run-ma" value="800" min="100" max="2000" style="width:80px"> mA
+      <input type="number" id="m-hold-ma" value="400" min="0" max="2000" style="width:80px"> mA (Hold)
+      <button onclick="setMotorCurrent()">Setzen</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Mikroschritt:</span>
+      <select id="m-microstep">
+        <option>1</option><option>2</option><option>4</option><option>8</option>
+        <option selected>16</option><option>32</option><option>64</option>
+        <option>128</option><option>256</option>
+      </select>
+      <button onclick="setMicrostep()">Setzen</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">StealthChop:</span>
+      <select id="m-stealthchop"><option value="1">AN</option><option value="0">AUS</option></select>
+      <button onclick="setStealthchop()">Setzen</button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Interpolation:</span>
+      <select id="m-intpol"><option value="1">AN</option><option value="0">AUS</option></select>
+      <button onclick="setInterpolation()">Setzen</button>
+    </div>
+  </div>
+
+  <!-- SD-Karte -->
+  <div class="section">
+    <div class="section-title">SD-Karte &amp; Daten</div>
+    <div class="setting-row">
+      <span class="setting-label">Speicher:</span>
+      <span id="sd-free">–</span> frei /
+      <span id="sd-total">–</span>
+    </div>
+    <div class="setting-row">
+      <button onclick="datalogStart()">▶ Aufzeichnung starten</button>
+      <button class="secondary" onclick="datalogStop()">⏹ Stoppen</button>
+      <span id="log-state" class="badge" style="margin-left:8px">idle</span>
+    </div>
+    <div id="file-list" class="file-list" style="margin-top:12px"></div>
+    <div style="margin-top:10px">
+      <button class="danger" onclick="deleteAllFiles()">Alle Dateien löschen</button>
+    </div>
+  </div>
+
+</div><!-- /settings -->
+</main>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
