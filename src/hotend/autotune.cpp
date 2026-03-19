@@ -3,6 +3,7 @@
 #include "heater.h"
 #include "safety.h"
 #include "../config.h"
+#include "esp_task_wdt.h"
 
 // =============================================================
 // Relay-Autotune nach Ziegler-Nichols (wie Marlin Z.711–777)
@@ -83,6 +84,7 @@ AutotuneResult autotune(float target, int cycles) {
             cycle++;
             minT = target;
         }
+        esp_task_wdt_reset();
         delay(1);
     }
 

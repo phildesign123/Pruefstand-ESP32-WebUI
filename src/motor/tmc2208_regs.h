@@ -5,10 +5,6 @@
 // TMC2208 Register-Adressen und Bitmasken
 // =============================================================
 
-// UART-Protokoll
-#define TMC2208_SYNC        0x05
-#define TMC2208_SLAVE_ADDR  0x00
-
 // Register-Adressen (Read)
 #define TMC2208_REG_GCONF       0x00
 #define TMC2208_REG_GSTAT       0x01

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(~/.platformio/penv/Scripts/platformio.exe pkg:*)",
+      "Bash(rm -rf ~/.platformio/packages)",
+      "Bash(rm -rf \"C:/.pio/pruefstand\")",
+      "Bash(~/.platformio/penv/Scripts/platformio.exe run:*)",
+      "Bash(wc -l src/webui/*.cpp src/hotend/*.cpp src/motor/*.cpp src/load_cell/*.cpp src/datalog/*.cpp)"
+    ]
+  }
+}

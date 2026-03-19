@@ -8,6 +8,7 @@ enum SafetyFault : uint8_t {
     FAULT_THERMAL_RUNAWAY = 2,
     FAULT_TEMP_JUMP       = 3,
     FAULT_SENSOR          = 4,
+    FAULT_MIN_TEMP        = 5,
 };
 
 SafetyFault      safety_check(float current_temp, float target_temp, uint8_t heater_output);

@@ -8,6 +8,7 @@
 #include "../config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 
 // =============================================================
 // Hotend-Modul – FreeRTOS-Task, PID-Regelung, Safety
@@ -36,6 +37,9 @@ static void emergency_stop(SafetyFault fault) {
 }
 
 void hotend_task(void *arg) {
+    // Hardware Watchdog: Task registrieren
+    esp_task_wdt_add(NULL);
+
     unsigned long last_pid_ms  = 0;
 
     for (;;) {
@@ -75,6 +79,7 @@ void hotend_task(void *arg) {
             }
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }
@@ -86,6 +91,9 @@ void hotend_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     setup_heater();
     setup_fan();
     s_pid.set_tunings(DEFAULT_Kp, DEFAULT_Ki, DEFAULT_Kd);
+
+    // Hardware Watchdog initialisieren
+    esp_task_wdt_init(WDT_TIMEOUT_S, true);  // true = panic → MCU-Reset
 
     xTaskCreatePinnedToCore(
         hotend_task, "hotend_pid", TASK_STACK_HOTEND,

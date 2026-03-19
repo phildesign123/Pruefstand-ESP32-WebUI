@@ -5,8 +5,8 @@
 | Bus / Interface | Peripherie         | GPIOs                          |
 | --------------- | ------------------ | ------------------------------ |
 | LEDC PWM        | 2× MOSFET          | 25, 26                         |
-| VSPI (shared)   | MAX31865 + SD-Karte | 23, 19, 18, 5, 4, 36          |
-| I2C             | NAU7802 + ADS1115  | 21, 22, 39                     |
+| VSPI (shared)   | MAX31865 + SD-Karte | 23, 19, 18, 5, 4              |
+| I2C             | NAU7802 + ADS1115  | 21, 22, 34                     |
 | RMT + UART      | TMC2208            | 27, 14, 13, 33, 32            |
 
 ---
@@ -28,7 +28,6 @@
 | MISO     | 19   | VSPI, shared mit SD-Karte        |
 | SCLK     | 18   | VSPI, shared mit SD-Karte        |
 | CS       | 5    | Strapping Pin, nach Boot unkritisch |
-| DRDY     | 36   | Input-only, Interrupt            |
 
 ---
 
@@ -52,7 +51,7 @@
 | -------- | ---- | --------------------------- |
 | SDA      | 21   | I2C Default, shared         |
 | SCL      | 22   | I2C Default, shared         |
-| DRDY     | 39   | Input-only, Interrupt       |
+| DRDY     | 34   | Input-only, Interrupt       |
 
 - I2C-Adresse: **0x2A** (fest)
 - Abtastrate: **80 SPS** (Register CTRL2)
@@ -66,7 +65,7 @@
 | -------- | ---- | --------------------------- |
 | SDA      | 21   | Shared mit NAU7802          |
 | SCL      | 22   | Shared mit NAU7802          |
-| ALRT/RDY | 34   | Optional, Input-only        |
+| ALRT/RDY | 35   | Optional, Input-only        |
 
 - I2C-Adresse: **0x48** (ADDR → GND, konfigurierbar)
 - Kein Adresskonflikt mit NAU7802
@@ -98,8 +97,9 @@
 | 2    | I/O         | Strapping Pin, LED auf manchen Boards |
 | 12   | I/O         | Strapping — muss beim Boot LOW sein  |
 | 15   | I/O         | Strapping Pin                    |
-| 34   | Input-only  | Frei (oder ALRT/RDY für ADS1115) |
+| 34   | Input-only  | DRDY NAU7802                     |
 | 35   | Input-only  | Frei                             |
+| 39   | —           | Nicht vorhanden auf diesem Board |
 
 ---
 
@@ -120,14 +120,19 @@
                     ┌─────────────────────────┐
     MOSFET 1 ←──── │ GPIO 25          GPIO 21 │ ────→ SDA (I2C)
     MOSFET 2 ←──── │ GPIO 26          GPIO 22 │ ────→ SCL (I2C)
-                    │                  GPIO 39 │ ────→ DRDY (NAU7802)
-   MOSI (VSPI) ←── │ GPIO 23          GPIO 34 │ ────→ ALRT (ADS1115)
+   MOSI (VSPI) ←── │ GPIO 23          GPIO 35 │ ────→ ALRT (ADS1115)
    MISO (VSPI) ←── │ GPIO 19                  │
    SCLK (VSPI) ←── │ GPIO 18  ESP32-WROVER-E  │
    CS MAX31865 ←── │ GPIO 5           GPIO 27 │ ────→ STEP (RMT)
    CS SD-Karte ←── │ GPIO 4           GPIO 14 │ ────→ DIR
-   DRDY MAX ←───── │ GPIO 36          GPIO 13 │ ────→ EN
+  DRDY NAU7802 ←── │ GPIO 34          GPIO 13 │ ────→ EN
                     │                  GPIO 33 │ ────→ UART TX (TMC)
                     │                  GPIO 32 │ ────→ UART RX (TMC)
                     └─────────────────────────┘
 ```
+
+
+  move 10 10 rev
+    esteps set 48.29
+      move 10 10 rev
+      esteps set 97

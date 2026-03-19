@@ -123,21 +123,15 @@ static void motor_task(void *arg) {
                 break;
 
             case CMD_SET_CURRENT:
-                if (s_uart_mutex) xSemaphoreTake(s_uart_mutex, portMAX_DELAY);
                 tmc2208_set_current(cmd.current.run_ma, cmd.current.hold_ma);
-                if (s_uart_mutex) xSemaphoreGive(s_uart_mutex);
                 break;
 
             case CMD_SET_MICROSTEP:
-                if (s_uart_mutex) xSemaphoreTake(s_uart_mutex, portMAX_DELAY);
                 tmc2208_set_microstep(cmd.ms.microstep);
-                if (s_uart_mutex) xSemaphoreGive(s_uart_mutex);
                 break;
 
             case CMD_SET_STEALTHCHOP:
-                if (s_uart_mutex) xSemaphoreTake(s_uart_mutex, portMAX_DELAY);
                 tmc2208_set_stealthchop(cmd.flag.enable);
-                if (s_uart_mutex) xSemaphoreGive(s_uart_mutex);
                 break;
 
             case CMD_CAL_START: {
@@ -259,17 +253,11 @@ bool motor_set_stealthchop(bool enable) {
 }
 
 bool motor_set_interpolation(bool enable) {
-    if (s_uart_mutex) xSemaphoreTake(s_uart_mutex, portMAX_DELAY);
-    bool ok = tmc2208_set_interpolation(enable);
-    if (s_uart_mutex) xSemaphoreGive(s_uart_mutex);
-    return ok;
+    return tmc2208_set_interpolation(enable);
 }
 
 bool motor_get_tmc_status(TMC2208Status *status) {
-    if (s_uart_mutex) xSemaphoreTake(s_uart_mutex, portMAX_DELAY);
-    bool ok = tmc2208_read_status(status);
-    if (s_uart_mutex) xSemaphoreGive(s_uart_mutex);
-    return ok;
+    return tmc2208_read_status(status);
 }
 
 bool motor_calibrate_start(float distance_mm, float speed_mm_s) {

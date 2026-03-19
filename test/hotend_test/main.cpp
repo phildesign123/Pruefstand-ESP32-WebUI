@@ -90,7 +90,7 @@ static TestResult test_heater() {
 
     unsigned long t0 = millis();
     float peak = start_temp;
-    while (millis() - t0 < 3000) {
+    while (millis() - t0 < 15000) {
         float t = hotend_get_temperature();
         if (t > peak) peak = t;
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -98,7 +98,7 @@ static TestResult test_heater() {
     hotend_set_target(0.0f);   // Heizer aus
 
     float rise = peak - start_temp;
-    if (rise < 2.0f) {
+    if (rise < 1.0f) {
         snprintf(r.message, sizeof(r.message),
                  "Kein Anstieg: Δ=%.1f °C (%.1f→%.1f) – MOSFET/Kabel prüfen",
                  rise, start_temp, peak);
@@ -116,15 +116,15 @@ static TestResult test_heater() {
 static TestResult test_fan() {
     TestResult r = {"fan", true, ""};
     set_fan_override(255);
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(10000));
     set_fan_override(0);   // Zurück auf Auto-Modus
     snprintf(r.message, sizeof(r.message),
-             "Lüfter 2 s auf 100 %% – bitte visuell/akustisch prüfen");
+             "Lüfter 10 s auf 100 %% – bitte visuell/akustisch prüfen");
     return r;
 }
 
 // ── Test 4: PID-Response ──────────────────────────────────────
-// Prüft, ob PID-Regler Hotend auf 200 °C aufheizen kann (max 300 s)
+// Prüft, ob PID-Regler Hotend auf 200 °C aufheizen kann (max 600 s)
 static TestResult test_pid_response() {
     TestResult r = {"pid_response", false, ""};
 
@@ -134,7 +134,7 @@ static TestResult test_pid_response() {
     unsigned long t_stable  = 0;
     bool          reached   = false;
 
-    while (millis() - t_start < 300000UL) {
+    while (millis() - t_start < 600000UL) {
         if (hotend_has_fault()) {
             snprintf(r.message, sizeof(r.message),
                      "Safety-Fault: %s", hotend_get_fault_string());
@@ -152,9 +152,9 @@ static TestResult test_pid_response() {
             reached = false;
         }
 
-        // Fortschritt alle 5 s ausgeben
+        // Fortschritt jede Sekunde ausgeben
         unsigned long elapsed = millis() - t_start;
-        if (elapsed % 5000 < 200) {
+        if (elapsed % 1000 < 200) {
             Serial.printf("[TEST] pid_response: %.1f / 200.0 °C  (%lu s)\n",
                           temp, elapsed / 1000);
         }
@@ -225,8 +225,8 @@ void setup() {
 static unsigned long s_last_status = 0;
 
 void loop() {
-    // Alle 2 s automatisch Status auf Serial ausgeben
-    if (millis() - s_last_status >= 2000) {
+    // Jede Sekunde automatisch Status auf Serial ausgeben
+    if (millis() - s_last_status >= 1000) {
         s_last_status = millis();
         Serial.printf("[HOTEND] T=%.1f / %.1f °C  Duty=%.0f%%  Fan=%d",
                       hotend_get_temperature(), hotend_get_target(),

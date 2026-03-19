@@ -16,6 +16,7 @@
 static TwoWire          *s_wire        = nullptr;
 static SemaphoreHandle_t s_i2c_mutex   = nullptr;
 static SemaphoreHandle_t s_drdy_sem    = nullptr;
+static TaskHandle_t      s_task_handle = nullptr;
 
 static MedianFilter      s_median;
 static AvgFilter         s_avg;
@@ -103,18 +104,23 @@ bool load_cell_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
                   s_calibrated ? "vorhanden" : "fehlt", s_cal_factor);
 
     xTaskCreatePinnedToCore(load_cell_task, "load_cell", TASK_STACK_LOADCELL,
-                            nullptr, TASK_PRIO_LOADCELL, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_LOADCELL, &s_task_handle, tskNO_AFFINITY);
     return true;
 }
 
 bool load_cell_tare() {
+    if (s_task_handle) vTaskSuspend(s_task_handle);
     int64_t acc = 0;
+    int     count = 0;
     for (int i = 0; i < LOAD_CELL_TARE_SAMPLES; i++) {
         if (xSemaphoreTake(s_drdy_sem, pdMS_TO_TICKS(50)) != pdTRUE) continue;
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
+        count++;
     }
+    if (s_task_handle) vTaskResume(s_task_handle);
+    if (count == 0) return false;
     portENTER_CRITICAL(&s_mux);
-    s_tare_offset = (int32_t)(acc / LOAD_CELL_TARE_SAMPLES);
+    s_tare_offset = (int32_t)(acc / count);
     portEXIT_CRITICAL(&s_mux);
     Serial.printf("[LOADCELL] Tariert. Offset=%ld\n", (long)s_tare_offset);
     return true;
@@ -123,12 +129,17 @@ bool load_cell_tare() {
 bool load_cell_calibrate(float known_weight_g) {
     if (known_weight_g <= 0.0f) return false;
 
+    if (s_task_handle) vTaskSuspend(s_task_handle);
     int64_t acc = 0;
+    int     count = 0;
     for (int i = 0; i < LOAD_CELL_CAL_SAMPLES; i++) {
         if (xSemaphoreTake(s_drdy_sem, pdMS_TO_TICKS(50)) != pdTRUE) continue;
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
+        count++;
     }
-    int32_t avg = (int32_t)(acc / LOAD_CELL_CAL_SAMPLES);
+    if (s_task_handle) vTaskResume(s_task_handle);
+    if (count == 0) return false;
+    int32_t avg = (int32_t)(acc / count);
     float factor = (float)(avg - s_tare_offset) / known_weight_g;
 
     if (fabsf(factor) < 1.0f) return false;  // Unrealistisch

@@ -19,7 +19,7 @@
 
 // ── Lüfter ──────────────────────────────────────────────────
 #define FAN_PIN             26
-#define FAN_PWM_CHANNEL     1
+#define FAN_PWM_CHANNEL     2
 #define FAN_PWM_FREQ        25000      // 25 kHz (lautlos)
 #define FAN_PWM_RESOLUTION  8          // 8-Bit → 0–255
 #define FAN_ON_TEMP         50.0f
@@ -50,10 +50,17 @@
 
 // ── Sicherheit ───────────────────────────────────────────────
 #define TEMP_MAX                    300.0f
+#define TEMP_MIN                    5.0f
 #define THERMAL_RUNAWAY_PERIOD_MS   20000UL
 #define THERMAL_RUNAWAY_HYSTERESIS  2.0f
-#define THERMAL_RUNAWAY_MIN_OUTPUT  200
+#define THERMAL_RUNAWAY_MIN_OUTPUT  127
 #define TEMP_MAX_JUMP               50.0f
+// Thermal Runaway Haltephase (Ziel erreicht)
+#define THERMAL_HOLD_WINDOW         5.0f     // Haltephase aktiv wenn < 5°C vom Ziel
+#define THERMAL_HOLD_DROP           15.0f    // Max. erlaubter Abfall unter Ziel
+#define THERMAL_HOLD_PERIOD_MS      30000UL  // 30 s Erholungszeit
+// Hardware Watchdog
+#define WDT_TIMEOUT_S               5        // 5 s Task-WDT
 
 // ── Motor / TMC2208 ──────────────────────────────────────────
 #define MOTOR_STEP_PIN      27
@@ -73,7 +80,7 @@
 // ── Wägezelle / NAU7802 ──────────────────────────────────────
 #define NAU7802_SDA             21
 #define NAU7802_SCL             22
-#define NAU7802_DRDY_PIN        39
+#define NAU7802_DRDY_PIN        34
 #define NAU7802_I2C_ADDR        0x2A
 #define NAU7802_I2C_FREQ        400000
 #define LOAD_CELL_MEDIAN_SIZE   5

@@ -98,7 +98,7 @@ static bool sd_mounted = false;
 
 static bool sd_mount() {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
-    bool ok = SD.begin(SD_CS, *s_spi, 20000000);
+    bool ok = SD.begin(SD_CS, *s_spi, 4000000);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     sd_mounted = ok;
     if (!ok) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
@@ -160,7 +160,7 @@ static void writer_task(void *arg) {
         if (ring_count() == 0)       continue;
 
         // Zeilen formatieren (außerhalb Mutex)
-        char lines[DATALOG_BUFFER_SIZE][96];
+        static char lines[DATALOG_BUFFER_SIZE][96];
         int  nlines = 0;
         LogEntry e;
         while (ring_pop(&e) && nlines < DATALOG_BUFFER_SIZE) {

@@ -34,10 +34,10 @@ float load_cell_get_weight_g() {
 
 // ── Motor-Mock ────────────────────────────────────────────────
 // Schaltet alle 20 s zwischen Fahren (3 mm/s) und Stillstand
-float motor_get_current_speed() {
-    return motor_is_moving() ? 3.0f : 0.0f;
-}
-
 bool motor_is_moving() {
     return (millis() / 20000UL) % 2 == 1;
+}
+
+float motor_get_current_speed() {
+    return motor_is_moving() ? 3.0f : 0.0f;
 }

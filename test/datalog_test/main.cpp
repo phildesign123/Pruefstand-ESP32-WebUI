@@ -85,7 +85,7 @@ static void cmd_start(const String &args) {
 
 // ── Befehl: list ─────────────────────────────────────────────
 static void cmd_list() {
-    DatalogFileInfo files[DATALOG_MAX_FILES];
+    static DatalogFileInfo files[DATALOG_MAX_FILES];
     int count = datalog_list_files(files, DATALOG_MAX_FILES);
 
     if (count < 0) {
@@ -162,7 +162,7 @@ static void print_file_lines(const char *name, int n_lines, bool do_tail) {
     const int MAX_LINES = 200;
     if (n_lines > MAX_LINES) n_lines = MAX_LINES;
 
-    String lines[MAX_LINES];
+    static String lines[MAX_LINES];
     int    head    = 0;
     int    total   = 0;
     size_t offset  = 0;
