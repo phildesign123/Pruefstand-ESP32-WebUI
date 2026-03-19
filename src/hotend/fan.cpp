@@ -5,7 +5,7 @@ static uint8_t s_duty      = 0;
 static bool    s_auto_mode = true;
 
 void setup_fan() {
-    ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
+    ledcAttachChannel(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION, FAN_PWM_CHANNEL);  // Ch2, Timer 1
     ledcWrite(FAN_PIN, 0);
 }
 

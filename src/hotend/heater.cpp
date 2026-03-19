@@ -4,7 +4,7 @@
 static uint8_t s_current_pwm = 0;
 
 void setup_heater() {
-    ledcAttach(HEATER_PIN, PWM_FREQ, PWM_RESOLUTION);
+    ledcAttachChannel(HEATER_PIN, PWM_FREQ, PWM_RESOLUTION, PWM_CHANNEL);  // Ch0, Timer 0
     ledcWrite(HEATER_PIN, 0);
 }
 
