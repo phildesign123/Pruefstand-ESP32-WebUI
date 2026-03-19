@@ -197,7 +197,7 @@ bool motor_init(SemaphoreHandle_t uart_mutex) {
     // Queue & Task
     s_cmd_queue = xQueueCreate(8, sizeof(MotorCmd));
     xTaskCreatePinnedToCore(motor_task, "motor_mgr", TASK_STACK_MOTOR,
-                            nullptr, TASK_PRIO_MOTOR, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_MOTOR, nullptr, CORE_REALTIME);
     Serial.println("[MOTOR] Initialisiert.");
     return true;
 }

@@ -15,7 +15,6 @@
 
 static TwoWire          *s_wire        = nullptr;
 static SemaphoreHandle_t s_i2c_mutex   = nullptr;
-static SemaphoreHandle_t s_drdy_sem    = nullptr;
 static TaskHandle_t      s_task_handle = nullptr;
 
 static MedianFilter      s_median;
@@ -31,13 +30,7 @@ static bool     s_calibrated    = false;
 static Preferences s_prefs;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-// ── DRDY ISR ────────────────────────────────────────────────
-
-static void IRAM_ATTR drdy_isr() {
-    BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR(s_drdy_sem, &woken);
-    if (woken) portYIELD_FROM_ISR();
-}
+// DRDY wird per Polling geprüft (stabiler als ISR bei hoher SPS-Rate)
 
 // ── NVS ──────────────────────────────────────────────────────
 
@@ -59,9 +52,9 @@ static void nvs_save() {
 
 static void load_cell_task(void *arg) {
     for (;;) {
-        // Warten auf DRDY (max 20 ms Timeout)
-        if (xSemaphoreTake(s_drdy_sem, pdMS_TO_TICKS(20)) != pdTRUE) {
-            Serial.println("[LOADCELL] DRDY Timeout – Sensorfehler?");
+        // Polling: DRDY-Register oder GPIO prüfen (80 SPS = 12.5 ms)
+        if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) {
+            vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
 
@@ -88,13 +81,6 @@ bool load_cell_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
     s_wire      = &wire;
     s_i2c_mutex = i2c_mutex;
 
-    s_drdy_sem = xSemaphoreCreateBinary();
-    if (!s_drdy_sem) return false;
-
-    // DRDY-Pin als Interrupt (fallende Flanke)
-    pinMode(NAU7802_DRDY_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(NAU7802_DRDY_PIN), drdy_isr, RISING);
-
     // NAU7802 initialisieren
     if (!nau7802_init(wire, i2c_mutex)) return false;
 
@@ -104,7 +90,7 @@ bool load_cell_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
                   s_calibrated ? "vorhanden" : "fehlt", s_cal_factor);
 
     xTaskCreatePinnedToCore(load_cell_task, "load_cell", TASK_STACK_LOADCELL,
-                            nullptr, TASK_PRIO_LOADCELL, &s_task_handle, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_LOADCELL, &s_task_handle, CORE_REALTIME);
     return true;
 }
 
@@ -113,7 +99,11 @@ bool load_cell_tare() {
     int64_t acc = 0;
     int     count = 0;
     for (int i = 0; i < LOAD_CELL_TARE_SAMPLES; i++) {
-        if (xSemaphoreTake(s_drdy_sem, pdMS_TO_TICKS(50)) != pdTRUE) continue;
+        unsigned long t0 = millis();
+        while (!nau7802_is_ready(*s_wire, s_i2c_mutex) && millis() - t0 < 50) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+        if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) continue;
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
         count++;
     }
@@ -133,7 +123,11 @@ bool load_cell_calibrate(float known_weight_g) {
     int64_t acc = 0;
     int     count = 0;
     for (int i = 0; i < LOAD_CELL_CAL_SAMPLES; i++) {
-        if (xSemaphoreTake(s_drdy_sem, pdMS_TO_TICKS(50)) != pdTRUE) continue;
+        unsigned long t0 = millis();
+        while (!nau7802_is_ready(*s_wire, s_i2c_mutex) && millis() - t0 < 50) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+        if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) continue;
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
         count++;
     }
@@ -159,5 +153,6 @@ int32_t load_cell_get_raw()       { return s_filtered_raw; }
 bool    load_cell_is_calibrated() { return s_calibrated; }
 
 void load_cell_deinit() {
-    detachInterrupt(digitalPinToInterrupt(NAU7802_DRDY_PIN));
+    if (s_task_handle) vTaskDelete(s_task_handle);
+    s_task_handle = nullptr;
 }

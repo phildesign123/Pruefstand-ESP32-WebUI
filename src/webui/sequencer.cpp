@@ -118,7 +118,7 @@ static void sequencer_task(void *arg) {
 
 void sequencer_init() {
     xTaskCreatePinnedToCore(sequencer_task, "sequencer", TASK_STACK_SEQUENCER,
-                            nullptr, TASK_PRIO_SEQUENCER, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_SEQUENCER, nullptr, CORE_REALTIME);
 }
 
 bool sequencer_add(float temp_c, float speed_mm_s, float duration_s) {

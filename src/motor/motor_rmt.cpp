@@ -110,7 +110,7 @@ bool motor_rmt_init(int step_pin) {
     // Interne Task erstellen
     xTaskCreatePinnedToCore(rmt_step_task, "rmt_step", 2048,
                             nullptr, TASK_PRIO_MOTOR + 1,
-                            &s_rmt_task_hdl, tskNO_AFFINITY);
+                            &s_rmt_task_hdl, CORE_REALTIME);
     Serial.println("[RMT] Initialisiert (1 MHz, CH0).");
     return true;
 }

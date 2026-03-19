@@ -8,6 +8,7 @@
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
@@ -435,10 +436,27 @@ static void register_routes() {
 // ── Öffentliche API ──────────────────────────────────────────
 
 void webui_init() {
-    // Wi-Fi als Access Point
-    WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
-    Serial.printf("[WIFI] AP: %s  IP: %s\n",
-                  WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+    // Wi-Fi als Station (verbindet mit vorhandenem WLAN)
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASSWORD);
+    Serial.printf("[WIFI] Verbinde mit '%s'...\n", WIFI_STA_SSID);
+
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
+        delay(250);
+        Serial.print(".");
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\n[WIFI] Verbunden! IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+        // Fallback: Access Point
+        Serial.println("\n[WIFI] STA fehlgeschlagen – starte AP als Fallback");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
+        Serial.printf("[WIFI] AP: %s  IP: %s\n",
+                      WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+    }
 
     // LittleFS mounten (Frontend-Dateien)
     if (!LittleFS.begin()) {
@@ -451,7 +469,7 @@ void webui_init() {
 
     // WebSocket-Push-Task starten
     xTaskCreatePinnedToCore(ws_push_task, "ws_push", TASK_STACK_WS_PUSH,
-                            nullptr, TASK_PRIO_WS_PUSH, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_WS_PUSH, nullptr, CORE_WIFI);
 }
 
 void webui_notify_clients(const char *json) {

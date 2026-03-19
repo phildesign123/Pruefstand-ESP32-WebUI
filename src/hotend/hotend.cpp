@@ -26,7 +26,7 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void emergency_stop(SafetyFault fault) {
     set_heater_pwm(0);
-    ledcWrite(FAN_PWM_CHANNEL, 255);   // Lüfter voll an zum Abkühlen
+    ledcWrite(FAN_PIN, 255);   // Lüfter voll an zum Abkühlen
     s_pid.reset();
     portENTER_CRITICAL(&s_mux);
     s_target_temp = 0.0f;
@@ -37,9 +37,6 @@ static void emergency_stop(SafetyFault fault) {
 }
 
 void hotend_task(void *arg) {
-    // Hardware Watchdog: Task registrieren
-    esp_task_wdt_add(NULL);
-
     unsigned long last_pid_ms  = 0;
 
     for (;;) {
@@ -79,8 +76,7 @@ void hotend_task(void *arg) {
             }
         }
 
-        esp_task_wdt_reset();
-        vTaskDelay(1 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
@@ -92,12 +88,11 @@ void hotend_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     setup_fan();
     s_pid.set_tunings(DEFAULT_Kp, DEFAULT_Ki, DEFAULT_Kd);
 
-    // Hardware Watchdog initialisieren
-    esp_task_wdt_init(WDT_TIMEOUT_S, true);  // true = panic → MCU-Reset
+    // WDT deaktiviert während Entwicklung
 
     xTaskCreatePinnedToCore(
         hotend_task, "hotend_pid", TASK_STACK_HOTEND,
-        nullptr, TASK_PRIO_HOTEND, nullptr, tskNO_AFFINITY);
+        nullptr, TASK_PRIO_HOTEND, nullptr, CORE_REALTIME);
 
     Serial.println("[HOTEND] Initialisiert.");
 }
@@ -144,7 +139,7 @@ void hotend_clear_fault() {
     s_fault_code  = SAFETY_OK;
     s_target_temp = 0.0f;
     portEXIT_CRITICAL(&s_mux);
-    ledcWrite(FAN_PWM_CHANNEL, 0);
+    ledcWrite(FAN_PIN, 0);
     Serial.println("[HOTEND] Fault quittiert.");
 }
 

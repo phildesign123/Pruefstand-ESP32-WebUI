@@ -96,14 +96,43 @@ static void make_filename(char *buf, size_t len) {
 
 static bool sd_mounted = false;
 
-static bool sd_mount() {
+// SD-Mount in eigenem Task mit Timeout
+static volatile bool s_sd_done = false;
+static volatile bool s_sd_ok   = false;
+
+static void sd_mount_task(void *arg) {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
-    bool ok = SD.begin(SD_CS, *s_spi, 4000000);
+    s_sd_ok = SD.begin(SD_CS, *s_spi, 4000000);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
-    sd_mounted = ok;
-    if (!ok) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
-    else     Serial.printf("[DATALOG] SD-Karte: %lluMB\n", SD.totalBytes() / (1024 * 1024));
-    return ok;
+    s_sd_done = true;
+    vTaskDelete(NULL);
+}
+
+static bool sd_mount() {
+    Serial.println("[DATALOG] SD-Karte wird gesucht...");
+    s_sd_done = false;
+    s_sd_ok   = false;
+
+    TaskHandle_t h = NULL;
+    xTaskCreatePinnedToCore(sd_mount_task, "sd_mnt", 4096,
+                            nullptr, 1, &h, tskNO_AFFINITY);
+
+    // Max 5 Sekunden warten
+    for (int i = 0; i < 50 && !s_sd_done; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (!s_sd_done) {
+        Serial.println("[DATALOG] SD-Karte Timeout – übersprungen.");
+        if (h) vTaskDelete(h);
+        sd_mounted = false;
+        return false;
+    }
+
+    sd_mounted = s_sd_ok;
+    if (!sd_mounted) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
+    else             Serial.printf("[DATALOG] SD-Karte: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+    return sd_mounted;
 }
 
 // ── Sampler-Task ─────────────────────────────────────────────
@@ -212,14 +241,14 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     s_spi_mutex = spi_mutex;
     s_flush_sem = xSemaphoreCreateBinary();
 
-    if (!sd_mount()) return false;
+    sd_mount();  // Nicht-blockierend: fehlertolerант wenn keine SD-Karte
 
     xTaskCreatePinnedToCore(sampler_task, "datalog_s", TASK_STACK_DATALOG_S,
-                            nullptr, TASK_PRIO_DATALOG_S, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_DATALOG_S, nullptr, CORE_REALTIME);
     xTaskCreatePinnedToCore(writer_task,  "datalog_w", TASK_STACK_DATALOG_W,
-                            nullptr, TASK_PRIO_DATALOG_W, nullptr, tskNO_AFFINITY);
+                            nullptr, TASK_PRIO_DATALOG_W, nullptr, CORE_REALTIME);
     Serial.println("[DATALOG] Initialisiert.");
-    return true;
+    return sd_mounted;
 }
 
 bool datalog_start(uint32_t interval_ms) {

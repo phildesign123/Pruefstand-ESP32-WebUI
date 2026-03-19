@@ -122,6 +122,10 @@ void setup_sensor(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     // Erst-Konfiguration: Bias aus, Auto aus, 3-Wire, 50Hz
     spi_write_reg(MAX31865_CONFIG_WRITE, STD_FLAGS);
 
+    // Fault-Status löschen (Bit 1 = Fault Clear)
+    spi_write_reg(MAX31865_CONFIG_WRITE, STD_FLAGS | 0x02);
+    delay(1);
+
     // Blockierende Erstmessung für initialen Wert
     spi_write_reg(MAX31865_CONFIG_WRITE, STD_FLAGS | MAX31865_CONFIG_BIAS);
     delay(10);
@@ -129,6 +133,9 @@ void setup_sensor(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     delay(65);
     s_last_temp = read_rtd_temp();
     spi_write_reg(MAX31865_CONFIG_WRITE, STD_FLAGS);
+    // Software-Fault nach Init zurücksetzen
+    s_fault = false;
+    s_fault_code = 0;
 
     s_state   = SETUP_BIAS_VOLTAGE;
     s_next_ms = millis();

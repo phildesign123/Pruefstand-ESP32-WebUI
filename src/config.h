@@ -60,7 +60,7 @@
 #define THERMAL_HOLD_DROP           15.0f    // Max. erlaubter Abfall unter Ziel
 #define THERMAL_HOLD_PERIOD_MS      30000UL  // 30 s Erholungszeit
 // Hardware Watchdog
-#define WDT_TIMEOUT_S               5        // 5 s Task-WDT
+#define WDT_TIMEOUT_S               15       // 15 s Task-WDT (WiFi-Verbindung braucht Zeit)
 
 // ── Motor / TMC2208 ──────────────────────────────────────────
 #define MOTOR_STEP_PIN      27
@@ -102,6 +102,8 @@
 #define WIFI_AP_SSID            "ESP32-Steuerung"
 #define WIFI_AP_PASSWORD        "12345678"
 #define WIFI_AP_IP              "192.168.4.1"
+#define WIFI_STA_SSID           "Dahlbender"
+#define WIFI_STA_PASSWORD       "Menina93"
 
 // ── Sequencer ────────────────────────────────────────────────
 #define SEQ_TEMP_TOLERANCE      2.0f
@@ -112,7 +114,7 @@
 
 // ── Task-Konfiguration ────────────────────────────────────────
 #define TASK_STACK_HOTEND       4096
-#define TASK_STACK_LOADCELL     4096
+#define TASK_STACK_LOADCELL     8192
 #define TASK_STACK_MOTOR        4096
 #define TASK_STACK_DATALOG_S    2048
 #define TASK_STACK_DATALOG_W    4096
@@ -126,3 +128,7 @@
 #define TASK_PRIO_DATALOG_S     3
 #define TASK_PRIO_WS_PUSH       3
 #define TASK_PRIO_DATALOG_W     2
+
+// Core-Zuordnung: Core 0 = WiFi/WebUI, Core 1 = Echtzeit-Module
+#define CORE_WIFI               0
+#define CORE_REALTIME           1

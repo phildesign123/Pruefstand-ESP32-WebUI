@@ -5,9 +5,8 @@ static uint8_t s_duty      = 0;
 static bool    s_auto_mode = true;
 
 void setup_fan() {
-    ledcSetup(FAN_PWM_CHANNEL, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
-    ledcAttachPin(FAN_PIN, FAN_PWM_CHANNEL);
-    ledcWrite(FAN_PWM_CHANNEL, 0);
+    ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
+    ledcWrite(FAN_PIN, 0);
 }
 
 void update_fan(float temp) {
@@ -29,7 +28,7 @@ void update_fan(float temp) {
 
     if (new_duty != s_duty) {
         s_duty = new_duty;
-        ledcWrite(FAN_PWM_CHANNEL, s_duty);
+        ledcWrite(FAN_PIN, s_duty);
     }
 }
 
@@ -39,7 +38,7 @@ void set_fan_override(uint8_t duty) {
     } else {
         s_auto_mode = false;
         s_duty      = duty;
-        ledcWrite(FAN_PWM_CHANNEL, duty);
+        ledcWrite(FAN_PIN, duty);
     }
 }
 

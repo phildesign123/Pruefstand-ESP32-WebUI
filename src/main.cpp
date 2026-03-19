@@ -65,13 +65,19 @@ void setup() {
     motor_init(uart_mutex);
 
     // ── Wägezelle (NAU7802) ───────────────────────────────────
+    Serial.println("[MAIN] Load Cell init...");
     load_cell_init(Wire, i2c_mutex);
+    Serial.println("[MAIN] Load Cell fertig.");
 
     // ── Datenlogger (SD-Karte) ────────────────────────────────
+    Serial.println("[MAIN] Datalog init...");
     datalog_init(vspi, spi_mutex);
+    Serial.println("[MAIN] Datalog fertig.");
 
     // ── Web-UI (WiFi AP + HTTP + WebSocket) ──────────────────
+    Serial.println("[MAIN] WebUI init...");
     webui_init();
+    Serial.println("[MAIN] WebUI fertig.");
 
     // ── Sequencer-Task starten ────────────────────────────────
     sequencer_init();
