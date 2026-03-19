@@ -65,19 +65,13 @@ void setup() {
     motor_init(uart_mutex);
 
     // ── Wägezelle (NAU7802) ───────────────────────────────────
-    Serial.println("[MAIN] Load Cell init...");
     load_cell_init(Wire, i2c_mutex);
-    Serial.println("[MAIN] Load Cell fertig.");
 
     // ── Web-UI (WiFi + HTTP + WebSocket) – vor Datalog starten ─
-    Serial.println("[MAIN] WebUI init...");
     webui_init();
-    Serial.println("[MAIN] WebUI fertig.");
 
     // ── Datenlogger (SD-Karte) ────────────────────────────────
-    Serial.println("[MAIN] Datalog init...");
     datalog_init(vspi, spi_mutex);
-    Serial.println("[MAIN] Datalog fertig.");
 
     // ── Sequencer-Task starten ────────────────────────────────
     sequencer_init();
@@ -88,7 +82,8 @@ void setup() {
 
     Serial.printf("[MAIN] Bereit. Free Heap: %lu Bytes\n",
                   (unsigned long)ESP.getFreeHeap());
-    Serial.printf("[MAIN] Verbinde mit WLAN: http://%s\n", WIFI_AP_IP);
+    Serial.printf("[MAIN] WebUI: http://%s\n",
+                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : WIFI_AP_IP);
 }
 
 // ── Loop ─────────────────────────────────────────────────────

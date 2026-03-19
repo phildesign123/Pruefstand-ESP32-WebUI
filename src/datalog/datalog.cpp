@@ -213,19 +213,28 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     s_spi_mutex = spi_mutex;
     s_flush_sem = xSemaphoreCreateBinary();
 
-    // SD-Karte wird erst beim ersten datalog_start() gemountet (lazy init)
-    // sd_mount() hier überspringen – SD.begin() blockiert ohne Karte
+    // SD-Karte wird nicht beim Boot gemountet (SD.begin blockiert ohne Karte).
+    // Mount über API: POST /api/datalog/mount oder beim ersten datalog_start
+    Serial.println("[DATALOG] SD-Mount verzögert (kein Auto-Mount beim Boot).");
 
     xTaskCreatePinnedToCore(sampler_task, "datalog_s", TASK_STACK_DATALOG_S,
                             nullptr, TASK_PRIO_DATALOG_S, nullptr, CORE_REALTIME);
     xTaskCreatePinnedToCore(writer_task,  "datalog_w", TASK_STACK_DATALOG_W,
                             nullptr, TASK_PRIO_DATALOG_W, nullptr, CORE_REALTIME);
     Serial.println("[DATALOG] Initialisiert.");
-    return sd_mounted;
+    return true;
+}
+
+bool datalog_mount_sd() {
+    if (sd_mounted) return true;
+    return sd_mount();
 }
 
 bool datalog_start(uint32_t interval_ms) {
-    if (!sd_mounted && !sd_mount()) return false;
+    if (!sd_mounted) {
+        Serial.println("[DATALOG] Keine SD-Karte. Bitte erst einstecken und mounten.");
+        return false;
+    }
     if (interval_ms >= 100 && interval_ms <= 60000) s_interval_ms = interval_ms;
 
     make_filename(s_filename, sizeof(s_filename));

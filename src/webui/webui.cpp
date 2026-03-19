@@ -406,6 +406,10 @@ static void register_routes() {
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_cal_apply(r, b); }));
 
     // Datenlogger
+    s_server.on("/api/datalog/mount", HTTP_POST, [](AsyncWebServerRequest *r){
+        bool ok = datalog_mount_sd();
+        r->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"mount failed\"}");
+    });
     s_server.on("/api/datalog/status", HTTP_GET, api_datalog_status);
     s_server.on("/api/datalog/stop",   HTTP_POST, [](AsyncWebServerRequest *r){ api_datalog_stop(r); });
     s_server.on("/api/datalog/files",  HTTP_GET, api_datalog_files);

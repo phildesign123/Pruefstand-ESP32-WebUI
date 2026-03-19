@@ -62,13 +62,6 @@ void hotend_task(void *arg) {
                 float output = s_pid.compute(target, temp);
                 uint8_t pwm  = (uint8_t)((int)output >> 1);  // 0–255 → 0–127
 
-                static float last_dbg_target = -1;
-                if (target != last_dbg_target && target > 0) {
-                    Serial.printf("[PID] target=%.1f temp=%.1f output=%.1f pwm=%d\n",
-                                  target, temp, output, pwm);
-                    last_dbg_target = target;
-                }
-
                 SafetyFault sf = safety_check(temp, target, pwm);
                 if (sf != SAFETY_OK) {
                     emergency_stop(sf);
@@ -113,7 +106,6 @@ bool hotend_set_target(float temp_c) {
         s_pid.reset();
         set_heater_pwm(0);
     }
-    Serial.printf("[HOTEND] Ziel gesetzt: %.1f °C (fault=%d)\n", temp_c, (int)s_fault);
     return true;
 }
 

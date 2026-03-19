@@ -25,6 +25,9 @@ struct DatalogSDInfo {
 // Modul initialisieren (SD, Tasks)
 bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex);
 
+// SD-Karte manuell mounten (blockiert kurz)
+bool datalog_mount_sd();
+
 // Aufzeichnung steuern
 bool datalog_start(uint32_t interval_ms = 0);
 bool datalog_stop();

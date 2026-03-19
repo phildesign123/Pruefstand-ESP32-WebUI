@@ -89,6 +89,27 @@ bool load_cell_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
     Serial.printf("[LOADCELL] Kalibrierung: %s (Faktor=%.2f)\n",
                   s_calibrated ? "vorhanden" : "fehlt", s_cal_factor);
 
+    // Auto-Tare VOR Task-Start (kein Mutex-Konflikt)
+    Serial.println("[LOADCELL] Auto-Tare...");
+    {
+        vTaskDelay(pdMS_TO_TICKS(500));  // Sensor einschwingen lassen
+        int64_t acc = 0;
+        int count = 0;
+        for (int i = 0; i < LOAD_CELL_TARE_SAMPLES; i++) {
+            unsigned long t0 = millis();
+            while (!nau7802_is_ready(*s_wire, s_i2c_mutex) && millis() - t0 < 50) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+            }
+            if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) continue;
+            acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
+            count++;
+        }
+        if (count > 0) {
+            s_tare_offset = (int32_t)(acc / count);
+            Serial.printf("[LOADCELL] Tariert. Offset=%ld (%d Samples)\n", (long)s_tare_offset, count);
+        }
+    }
+
     xTaskCreatePinnedToCore(load_cell_task, "load_cell", TASK_STACK_LOADCELL,
                             nullptr, TASK_PRIO_LOADCELL, &s_task_handle, CORE_REALTIME);
     return true;
