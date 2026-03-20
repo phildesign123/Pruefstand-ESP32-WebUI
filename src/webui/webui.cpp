@@ -361,6 +361,25 @@ static void api_seq_delete(AsyncWebServerRequest *req, JsonVariant &body) {
 // ── Routen registrieren ──────────────────────────────────────
 
 static void register_routes() {
+    // Favicon (IMPT Logo – Hexagon mit Netzwerk)
+    s_server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *r){
+        r->send(200, "image/svg+xml",
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+            "<polygon points='32,2 58,17 58,47 32,62 6,47 6,17' fill='none' stroke='#222' stroke-width='5'/>"
+            "<polygon points='32,10 50,20 50,40 32,50 14,40 14,20' fill='none' stroke='#f06a00' stroke-width='3'/>"
+            "<line x1='32' y1='10' x2='32' y2='50' stroke='#f06a00' stroke-width='3'/>"
+            "<line x1='14' y1='20' x2='50' y2='40' stroke='#f06a00' stroke-width='3'/>"
+            "<line x1='50' y1='20' x2='14' y2='40' stroke='#f06a00' stroke-width='3'/>"
+            "<circle cx='32' cy='10' r='4' fill='#c040a0'/>"
+            "<circle cx='50' cy='20' r='4' fill='#c040a0'/>"
+            "<circle cx='50' cy='40' r='4' fill='#c040a0'/>"
+            "<circle cx='32' cy='50' r='4' fill='#c040a0'/>"
+            "<circle cx='14' cy='40' r='4' fill='#c040a0'/>"
+            "<circle cx='14' cy='20' r='4' fill='#c040a0'/>"
+            "<circle cx='32' cy='30' r='4' fill='#c040a0'/>"
+            "</svg>");
+    });
+
     // Statische Dateien aus LittleFS
     s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
