@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,9 +9,10 @@
 <body>
 
 <nav>
-  <span class="logo">⚙ Prüfstand</span>
+  <span class="logo">Prüfstand</span>
   <a href="#" class="active" onclick="showPage('dashboard',this)">Dashboard</a>
   <a href="#" onclick="showPage('settings',this)">Einstellungen</a>
+  <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Theme wechseln">🌙</button>
   <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
 </nav>
 
@@ -19,7 +20,7 @@
 <!-- ════════════ DASHBOARD ════════════ -->
 <div id="page-dashboard" class="page active">
 
-  <div class="grid2" style="margin-bottom:16px">
+  <div class="grid2" style="margin-bottom:18px">
 
     <!-- Temperatur-Karte -->
     <div class="card">
@@ -50,7 +51,7 @@
   </div>
 
   <!-- Motor-Jog -->
-  <div class="card" style="margin-bottom:16px">
+  <div class="card" style="margin-bottom:18px">
     <div class="card-title">Motor – Manuelle Steuerung</div>
     <div class="jog-row">
       <button onclick="jog(-10)">◄◄ −10</button>
@@ -70,7 +71,7 @@
   </div>
 
   <!-- Live-Chart -->
-  <div class="card" style="margin-bottom:16px">
+  <div class="card" style="margin-bottom:18px">
     <div class="card-title" style="display:flex;align-items:center;gap:10px">
       Live-Diagramm (10 Hz)
       <select id="chart-window" onchange="updateChartWindow()" style="margin-left:auto">

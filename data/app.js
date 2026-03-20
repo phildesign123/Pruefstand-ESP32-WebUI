@@ -193,9 +193,9 @@ function drawChart() {
     ctx.stroke();
   }
 
-  if (showTemp)   drawLine(chartData.temp,   '#e94560', v => tyL(v, tempMin, tempMax));
-  if (showWeight) drawLine(chartData.weight, '#0f8b8d', v => tyL(v, 0, wMax));
-  if (showSpeed)  drawLine(chartData.speed,  '#ffb300', v => tyL(v, 0, wMax));
+  if (showTemp)   drawLine(chartData.temp,   '#6366f1', v => tyL(v, tempMin, tempMax));
+  if (showWeight) drawLine(chartData.weight, '#10b981', v => tyL(v, 0, wMax));
+  if (showSpeed)  drawLine(chartData.speed,  '#f59e0b', v => tyL(v, 0, wMax));
 
   // Achsbeschriftung
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
@@ -457,8 +457,24 @@ function formatBytes(b) {
   return (b / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
 }
 
+// ── Theme Toggle ─────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('theme-btn').textContent = isDark ? '🌙' : '☀️';
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+
+function loadTheme() {
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  document.getElementById('theme-btn').textContent = saved === 'dark' ? '☀️' : '🌙';
+}
+
 // ── Init ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
+  loadTheme();
   initChart();
   wsConnect();
   loadSequences();

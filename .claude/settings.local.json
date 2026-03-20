@@ -6,7 +6,10 @@
       "Bash(rm -rf ~/.platformio/packages)",
       "Bash(rm -rf \"C:/.pio/pruefstand\")",
       "Bash(~/.platformio/penv/Scripts/platformio.exe run:*)",
-      "Bash(wc -l src/webui/*.cpp src/hotend/*.cpp src/motor/*.cpp src/load_cell/*.cpp src/datalog/*.cpp)"
+      "Bash(wc -l src/webui/*.cpp src/hotend/*.cpp src/motor/*.cpp src/load_cell/*.cpp src/datalog/*.cpp)",
+      "Bash(cd:*)",
+      "Bash(pio pkg:*)",
+      "Bash(\"C:/Users/phili/.platformio/penv/Scripts/platformio.exe\" run:*)"
     ]
   }
 }

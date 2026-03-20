@@ -6,6 +6,7 @@
 #include "esp_sntp.h"
 
 #include "config.h"
+#include <WiFi.h>
 #include "hotend/hotend.h"
 #include "motor/motor.h"
 #include "load_cell/load_cell.h"
