@@ -7,12 +7,15 @@
 #include "sequencer.h"
 
 #include <WiFi.h>
+#include <Preferences.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+static Preferences s_prefs;
 
 // =============================================================
 // Web-UI: ESPAsyncWebServer + WebSocket + REST-API
@@ -358,6 +361,98 @@ static void api_seq_delete(AsyncWebServerRequest *req, JsonVariant &body) {
         req->send(200, "application/json", "{\"ok\":true}");
 }
 
+// ── WiFi-API ─────────────────────────────────────────────────
+
+// WiFi-Credentials (RAM, geladen aus NVS)
+static char s_ssid_sta[33];
+static char s_pass_sta[33];
+static char s_ssid_ap[33];
+static char s_pass_ap[33];
+static bool s_wifi_sta_mode = false;  // true = STA verbunden, false = AP-Modus
+
+static void api_wifi_status(AsyncWebServerRequest *req) {
+    JsonDocument doc;
+    doc["ap_ssid"]       = s_ssid_ap;
+    doc["ap_password"]   = s_pass_ap;
+    doc["ap_ip"]         = s_wifi_sta_mode ? "" : WiFi.softAPIP().toString();
+    doc["sta_ssid"]      = s_ssid_sta;
+    doc["sta_password"]  = s_pass_sta;
+    doc["sta_connected"] = s_wifi_sta_mode;
+    doc["sta_ip"]        = s_wifi_sta_mode ? WiFi.localIP().toString() : "";
+    doc["sta_rssi"]      = s_wifi_sta_mode ? WiFi.RSSI() : 0;
+    doc["mac"]           = WiFi.macAddress();
+    doc["mode"]          = s_wifi_sta_mode ? "STA" : "AP";
+    char buf[512];
+    serializeJson(doc, buf, sizeof(buf));
+    req->send(200, "application/json", buf);
+}
+
+static void api_wifi_save(AsyncWebServerRequest *req, JsonVariant &body) {
+    const char *sta_ssid = body["sta_ssid"];
+    const char *sta_pass = body["sta_password"];
+    const char *ap_ssid  = body["ap_ssid"];
+    const char *ap_pass  = body["ap_password"];
+
+    if (sta_ssid) {
+        strncpy(s_ssid_sta, sta_ssid, 32); s_ssid_sta[32] = 0;
+        s_prefs.putString("sta_ssid", s_ssid_sta);
+    }
+    if (sta_pass) {
+        strncpy(s_pass_sta, sta_pass, 32); s_pass_sta[32] = 0;
+        s_prefs.putString("sta_pass", s_pass_sta);
+    }
+    if (ap_ssid && strlen(ap_ssid) > 0) {
+        strncpy(s_ssid_ap, ap_ssid, 32); s_ssid_ap[32] = 0;
+        s_prefs.putString("ap_ssid", s_ssid_ap);
+    }
+    if (ap_pass) {
+        strncpy(s_pass_ap, ap_pass, 32); s_pass_ap[32] = 0;
+        s_prefs.putString("ap_pass", s_pass_ap);
+    }
+    Serial.printf("[WIFI] Gespeichert: STA='%s' AP='%s'\n", s_ssid_sta, s_ssid_ap);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void api_wifi_scan(AsyncWebServerRequest *req) {
+    Serial.println("[WIFI] Scan gestartet...");
+    int n = WiFi.scanNetworks();
+    Serial.printf("[WIFI] Scan fertig: %d Netzwerke\n", n);
+
+    JsonDocument doc;
+    JsonArray arr = doc["networks"].to<JsonArray>();
+    // Duplikate vermeiden
+    for (int i = 0; i < n; i++) {
+        String ssid = WiFi.SSID(i);
+        if (ssid.length() == 0) continue;
+        // Duplikat-Check
+        bool dup = false;
+        for (int j = 0; j < i; j++) {
+            if (WiFi.SSID(j) == ssid) { dup = true; break; }
+        }
+        if (dup) continue;
+        JsonObject net = arr.add<JsonObject>();
+        net["ssid"] = ssid;
+        net["rssi"] = WiFi.RSSI(i);
+        net["open"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+    }
+    // Aktuelle STA-SSID immer mit aufnehmen falls nicht gefunden
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+        if (WiFi.SSID(i) == s_ssid_sta) { found = true; break; }
+    }
+    if (!found && strlen(s_ssid_sta) > 0) {
+        JsonObject net = arr.add<JsonObject>();
+        net["ssid"] = s_ssid_sta;
+        net["rssi"] = 0;
+        net["open"] = false;
+    }
+    WiFi.scanDelete();
+
+    char buf[1536];
+    serializeJson(doc, buf, sizeof(buf));
+    req->send(200, "application/json", buf);
+}
+
 // ── Routen registrieren ──────────────────────────────────────
 
 static void register_routes() {
@@ -379,9 +474,6 @@ static void register_routes() {
             "<circle cx='32' cy='30' r='4' fill='#c040a0'/>"
             "</svg>");
     });
-
-    // Statische Dateien aus LittleFS
-    s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
     // WebSocket
     s_ws.onEvent(on_ws_event);
@@ -451,6 +543,20 @@ static void register_routes() {
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/delete",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_delete(r, b); }));
 
+    // WiFi
+    s_server.on("/api/wifi/scan", HTTP_GET, api_wifi_scan);
+    s_server.on("/api/wifi/status", HTTP_GET, api_wifi_status);
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/wifi/save",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_wifi_save(r, b); }));
+    s_server.on("/api/wifi/restart", HTTP_POST, [](AsyncWebServerRequest *r){
+        r->send(200, "application/json", "{\"ok\":true}");
+        delay(500);
+        ESP.restart();
+    });
+
+    // Statische Dateien aus LittleFS (NACH allen API-Routen!)
+    s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+
     s_server.onNotFound([](AsyncWebServerRequest *req) {
         req->send(404, "text/plain", "Not Found");
     });
@@ -459,26 +565,46 @@ static void register_routes() {
 // ── Öffentliche API ──────────────────────────────────────────
 
 void webui_init() {
-    // Wi-Fi als Station (verbindet mit vorhandenem WLAN)
+    // NVS für WiFi-Einstellungen laden
+    s_prefs.begin("wifi", false);
+
+    // Defaults aus config.h in RAM laden
+    strncpy(s_ssid_sta, WIFI_STA_SSID, 32);
+    strncpy(s_pass_sta, WIFI_STA_PASSWORD, 32);
+    strncpy(s_ssid_ap,  WIFI_AP_SSID, 32);
+    strncpy(s_pass_ap,  WIFI_AP_PASSWORD, 32);
+
+    // Falls in NVS gespeichert, überschreiben
+    if (s_prefs.isKey("sta_ssid")) s_prefs.getString("sta_ssid").toCharArray(s_ssid_sta, 33);
+    if (s_prefs.isKey("sta_pass")) s_prefs.getString("sta_pass").toCharArray(s_pass_sta, 33);
+    if (s_prefs.isKey("ap_ssid"))  s_prefs.getString("ap_ssid").toCharArray(s_ssid_ap, 33);
+    if (s_prefs.isKey("ap_pass"))  s_prefs.getString("ap_pass").toCharArray(s_pass_ap, 33);
+
+    Serial.printf("[WIFI] NVS geladen: STA='%s' AP='%s'\n", s_ssid_sta, s_ssid_ap);
+
+    // STA-Modus versuchen (wie CG_scale)
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASSWORD);
-    Serial.printf("[WIFI] Verbinde mit '%s'...\n", WIFI_STA_SSID);
+    WiFi.begin(s_ssid_sta, s_pass_sta);
+    Serial.printf("[WIFI] Verbinde mit '%s'...\n", s_ssid_sta);
 
     unsigned long t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TIMEOUT_MS) {
         delay(250);
         Serial.print(".");
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\n[WIFI] Verbunden! IP: %s\n", WiFi.localIP().toString().c_str());
+        s_wifi_sta_mode = true;
+        Serial.printf("\n[WIFI] STA verbunden! IP: %s\n", WiFi.localIP().toString().c_str());
     } else {
-        // Fallback: Access Point
-        Serial.println("\n[WIFI] STA fehlgeschlagen – starte AP als Fallback");
+        // Fallback: AP-Modus (wie CG_scale)
+        s_wifi_sta_mode = false;
+        Serial.printf("\n[WIFI] STA fehlgeschlagen – starte AP: %s\n", s_ssid_ap);
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
-        Serial.printf("[WIFI] AP: %s  IP: %s\n",
-                      WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+        WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+        WiFi.softAP(s_ssid_ap, s_pass_ap);
+        Serial.printf("[WIFI] AP IP: %s\n", WiFi.softAPIP().toString().c_str());
     }
 
     // LittleFS mounten (Frontend-Dateien)

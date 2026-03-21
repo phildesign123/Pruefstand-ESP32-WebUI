@@ -104,6 +104,7 @@
 #define WIFI_AP_IP              "192.168.4.1"
 #define WIFI_STA_SSID           "Dahlbender"
 #define WIFI_STA_PASSWORD       "Menina93"
+#define WIFI_TIMEOUT_MS         10000      // 10s Timeout für STA-Verbindung
 
 // ── Sequencer ────────────────────────────────────────────────
 #define SEQ_TEMP_TOLERANCE      2.0f

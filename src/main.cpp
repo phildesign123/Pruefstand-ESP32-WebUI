@@ -83,8 +83,10 @@ void setup() {
 
     Serial.printf("[MAIN] Bereit. Free Heap: %lu Bytes\n",
                   (unsigned long)ESP.getFreeHeap());
-    Serial.printf("[MAIN] WebUI: http://%s\n",
-                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : WIFI_AP_IP);
+    if (WiFi.status() == WL_CONNECTED)
+        Serial.printf("[MAIN] WebUI: http://%s\n", WiFi.localIP().toString().c_str());
+    else
+        Serial.printf("[MAIN] WebUI: http://%s (AP-Modus)\n", WIFI_AP_IP);
 }
 
 // ── Loop ─────────────────────────────────────────────────────

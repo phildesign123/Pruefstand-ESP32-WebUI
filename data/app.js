@@ -21,6 +21,7 @@ function showPage(name, el) {
   document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
   if (el) el.classList.add('active');
   if (name === 'settings') refreshSettings();
+  if (name === 'wifi') refreshWifi();
 }
 
 // ── Toast ────────────────────────────────────────────────────
@@ -455,6 +456,79 @@ function formatBytes(b) {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return (b / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+// ── WiFi ─────────────────────────────────────────────────────
+async function refreshWifi() {
+  const d = await api('GET', '/api/wifi/status');
+  if (!d) return;
+  document.getElementById('wifi-mac').textContent = d.mac;
+  document.getElementById('wifi-mode').textContent = d.mode;
+
+  const staBadge = document.getElementById('wifi-sta-status');
+  if (d.sta_connected) {
+    staBadge.textContent = 'Verbunden';
+    staBadge.className = 'badge ok';
+    document.getElementById('wifi-sta-ip').textContent = d.sta_ip;
+    document.getElementById('wifi-sta-rssi').textContent = d.sta_rssi;
+  } else {
+    staBadge.textContent = 'AP-Modus';
+    staBadge.className = 'badge warn';
+    document.getElementById('wifi-sta-ip').textContent = d.ap_ip || '192.168.4.1';
+    document.getElementById('wifi-sta-rssi').textContent = '–';
+  }
+
+  document.getElementById('wifi-sta-ssid').value = d.sta_ssid || '';
+  document.getElementById('wifi-sta-pass').value = d.sta_password || '';
+  document.getElementById('wifi-ap-ssid').value = d.ap_ssid || '';
+  document.getElementById('wifi-ap-pass').value = d.ap_password || '';
+}
+
+async function wifiSave() {
+  const sta_ssid = document.getElementById('wifi-sta-ssid').value.trim();
+  const sta_pass = document.getElementById('wifi-sta-pass').value;
+  const ap_ssid  = document.getElementById('wifi-ap-ssid').value.trim();
+  const ap_pass  = document.getElementById('wifi-ap-pass').value;
+  if (!ap_ssid) { toast('AP-SSID darf nicht leer sein!'); return; }
+  if (ap_pass.length > 0 && ap_pass.length < 8) { toast('AP-Passwort: min. 8 Zeichen!'); return; }
+  const r = await api('POST', '/api/wifi/save', {
+    sta_ssid, sta_password: sta_pass,
+    ap_ssid, ap_password: ap_pass
+  });
+  if (r && r.ok) toast('WiFi-Einstellungen gespeichert');
+  else toast('Fehler beim Speichern');
+}
+
+async function wifiScanAndShow() {
+  const list = document.getElementById('wifi-scan-list');
+  list.style.display = 'block';
+  list.innerHTML = '<span class="spin"></span> Suche Netzwerke...';
+  const d = await api('GET', '/api/wifi/scan');
+  if (!d || !d.networks || d.networks.length === 0) {
+    list.innerHTML = '<span style="color:var(--text-dim)">Keine Netzwerke gefunden</span>';
+    return;
+  }
+  list.innerHTML = '';
+  d.networks.forEach(n => {
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    row.style.cursor = 'pointer';
+    row.innerHTML = `<span class="file-name">${n.ssid} ${n.open ? '🔓' : '🔒'}</span>`
+                  + `<span class="file-size">${n.rssi ? n.rssi + ' dBm' : 'gespeichert'}</span>`;
+    row.addEventListener('click', () => {
+      document.getElementById('wifi-sta-ssid').value = n.ssid;
+      document.getElementById('wifi-sta-pass').value = '';
+      document.getElementById('wifi-sta-pass').focus();
+      toast('SSID ausgewählt: ' + n.ssid);
+    });
+    list.appendChild(row);
+  });
+}
+
+async function wifiRestart() {
+  if (!confirm('ESP32 wirklich neustarten?')) return;
+  await api('POST', '/api/wifi/restart');
+  toast('Neustart...');
 }
 
 // ── Theme Toggle ─────────────────────────────────────────────

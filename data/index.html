@@ -13,6 +13,7 @@
   <span class="logo">Prüfstand</span>
   <a href="#" class="active" onclick="showPage('dashboard',this)">Dashboard</a>
   <a href="#" onclick="showPage('settings',this)">Einstellungen</a>
+  <a href="#" onclick="showPage('wifi',this)">WiFi</a>
   <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Theme wechseln">🌙</button>
   <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
 </nav>
@@ -218,6 +219,70 @@
   </div>
 
 </div><!-- /settings -->
+
+<!-- ════════════ WIFI ════════════ -->
+<div id="page-wifi" class="page">
+
+  <!-- Status -->
+  <div class="section">
+    <div class="section-title">WiFi Status</div>
+    <div class="setting-row">
+      <span class="setting-label">Modus:</span>
+      <span id="wifi-mode" class="badge">–</span>
+      &nbsp;
+      <span id="wifi-sta-status" class="badge">–</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">IP-Adresse:</span>
+      <strong id="wifi-sta-ip">–</strong>
+      &nbsp;|&nbsp; RSSI: <span id="wifi-sta-rssi">–</span> dBm
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">MAC-Adresse:</span>
+      <span id="wifi-mac">–</span>
+    </div>
+  </div>
+
+  <!-- WLAN-Verbindung -->
+  <div class="section">
+    <div class="section-title">WLAN-Verbindung (Station)</div>
+    <div class="setting-row">
+      <span class="setting-label">SSID:</span>
+      <input type="text" id="wifi-sta-ssid" placeholder="WLAN-Name" style="width:180px">
+      <button class="secondary" onclick="wifiScanAndShow()">Netzwerke suchen</button>
+    </div>
+    <div id="wifi-scan-list" style="display:none;margin:8px 0"></div>
+    <div class="setting-row">
+      <span class="setting-label">Passwort:</span>
+      <input type="password" id="wifi-sta-pass" placeholder="Passwort" style="width:180px">
+    </div>
+  </div>
+
+  <!-- Access Point -->
+  <div class="section">
+    <div class="section-title">Access Point (Fallback)</div>
+    <div class="setting-row">
+      <span class="setting-label">SSID:</span>
+      <input type="text" id="wifi-ap-ssid" placeholder="AP-Name" style="width:180px">
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Passwort:</span>
+      <input type="text" id="wifi-ap-pass" placeholder="min. 8 Zeichen" style="width:180px">
+    </div>
+  </div>
+
+  <!-- Speichern & Neustart -->
+  <div class="section">
+    <div class="setting-row">
+      <button class="success" onclick="wifiSave()">Alle Einstellungen speichern</button>
+      <button class="danger" onclick="wifiRestart()" style="margin-left:8px">ESP32 neustarten</button>
+    </div>
+    <div style="color:var(--text-dim);font-size:12px;margin-top:8px">
+      Zuerst speichern, dann neustarten. Bei fehlgeschlagener WLAN-Verbindung startet der AP automatisch.
+    </div>
+  </div>
+
+</div><!-- /wifi -->
 </main>
 
 <div id="toast"></div>
