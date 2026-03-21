@@ -7,6 +7,7 @@
 #include "sequencer.h"
 
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <Preferences.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
@@ -28,8 +29,16 @@ static AsyncWebSocket  s_ws(WEBUI_WS_PATH);
 // ── WebSocket-Push-Task (10 Hz) ──────────────────────────────
 
 static void ws_push_task(void *arg) {
+    uint8_t cleanup_cnt = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(WEBUI_WS_INTERVAL_MS));
+
+        // Alle 2 Sekunden tote Clients aufräumen
+        if (++cleanup_cnt >= 20) {
+            cleanup_cnt = 0;
+            s_ws.cleanupClients();
+        }
+
         if (s_ws.count() == 0) continue;
 
         // Kompaktes JSON zusammenstellen
@@ -603,8 +612,17 @@ void webui_init() {
         Serial.printf("\n[WIFI] STA fehlgeschlagen – starte AP: %s\n", s_ssid_ap);
         WiFi.mode(WIFI_AP);
         WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
-        WiFi.softAP(s_ssid_ap, s_pass_ap);
-        Serial.printf("[WIFI] AP IP: %s\n", WiFi.softAPIP().toString().c_str());
+        WiFi.softAP(s_ssid_ap, s_pass_ap, WIFI_AP_CHANNEL, 0, WIFI_AP_MAX_CONN);
+
+        // AP-Optimierungen: TX-Power hoch, AMPDU aktiviert
+        esp_wifi_set_max_tx_power(WIFI_AP_TX_POWER);
+        // Protokoll auf 802.11n beschränken (weniger Overhead)
+        esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+        // Bandwidth auf 40 MHz (doppelter Durchsatz vs Default 20 MHz)
+        esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
+
+        Serial.printf("[WIFI] AP IP: %s (Ch%d, TxPwr=%d)\n",
+                      WiFi.softAPIP().toString().c_str(), WIFI_AP_CHANNEL, WIFI_AP_TX_POWER);
     }
 
     // LittleFS mounten (Frontend-Dateien)

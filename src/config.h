@@ -102,6 +102,9 @@
 #define WIFI_AP_SSID            "ESP32-Steuerung"
 #define WIFI_AP_PASSWORD        "12345678"
 #define WIFI_AP_IP              "192.168.4.1"
+#define WIFI_AP_CHANNEL         6          // Fester Kanal (1, 6 oder 11 = störungsarm)
+#define WIFI_AP_MAX_CONN        2          // Max. gleichzeitige Clients (spart RAM)
+#define WIFI_AP_TX_POWER        78         // TX-Leistung in 0.25dBm-Schritten (78 = 19.5 dBm ≈ Max)
 #define WIFI_STA_SSID           "Dahlbender"
 #define WIFI_STA_PASSWORD       "Menina93"
 #define WIFI_TIMEOUT_MS         10000      // 10s Timeout für STA-Verbindung
