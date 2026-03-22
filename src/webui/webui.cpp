@@ -243,7 +243,7 @@ static void api_motor_cal_apply(AsyncWebServerRequest *req, JsonVariant &body) {
 
 // --- Datenlogger ---
 static void api_datalog_status(AsyncWebServerRequest *req) {
-    const char *states[] = {"idle","recording","paused","error"};
+    const char *states[] = {"idle","recording","paused","error","stopping"};
     char buf[128];
     snprintf(buf, sizeof(buf),
              "{\"state\":\"%s\",\"file\":\"%s\",\"interval_ms\":%lu}",
@@ -255,8 +255,9 @@ static void api_datalog_status(AsyncWebServerRequest *req) {
 
 static void api_datalog_start(AsyncWebServerRequest *req, JsonVariant &body) {
     uint32_t iv = body["interval_ms"] | (uint32_t)DATALOG_INTERVAL_MS;
-    datalog_start(iv);
-    req->send(200, "application/json", "{\"ok\":true}");
+    bool ok = datalog_start(iv);
+    Serial.printf("[WEBUI] datalog_start(%lu) => %s\n", (unsigned long)iv, ok ? "OK" : "FAIL");
+    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"start failed – SD mounted?\"}");
 }
 
 static void api_datalog_stop(AsyncWebServerRequest *req) {
@@ -533,7 +534,7 @@ static void register_routes() {
     });
     s_server.on("/api/datalog/status", HTTP_GET, api_datalog_status);
     s_server.on("/api/datalog/stop",   HTTP_POST, [](AsyncWebServerRequest *r){ api_datalog_stop(r); });
-    s_server.on("/api/datalog/files",  HTTP_GET, api_datalog_files);
+    s_server.on("/api/datalog/filelist", HTTP_GET, api_datalog_files);
     s_server.on("/api/datalog/sdinfo", HTTP_GET, api_datalog_sdinfo);
     s_server.on("^\\/api\\/datalog\\/files\\/(.+)$", HTTP_GET, api_datalog_download);
     s_server.on("^\\/api\\/datalog\\/files\\/(.+)$", HTTP_DELETE,

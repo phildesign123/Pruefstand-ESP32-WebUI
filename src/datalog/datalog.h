@@ -8,6 +8,7 @@ enum DatalogState : uint8_t {
     DATALOG_RECORDING = 1,
     DATALOG_PAUSED    = 2,
     DATALOG_ERROR     = 3,
+    DATALOG_STOPPING  = 4,
 };
 
 struct DatalogFileInfo {

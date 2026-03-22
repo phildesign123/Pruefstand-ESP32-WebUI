@@ -41,32 +41,40 @@ static const uint8_t    STD_FLAGS      = MAX31865_CONFIG_3WIRE | MAX31865_CONFIG
 
 // ── SPI-Hilfsfunktionen (mit Mutex) ─────────────────────────
 
+static const SPISettings MAX_SPI_SETTINGS(1000000, MSBFIRST, SPI_MODE1);
+
 static void spi_write_reg(uint8_t addr, uint8_t val) {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+    s_spi->beginTransaction(MAX_SPI_SETTINGS);
     digitalWrite(MAX_CS, LOW);
     s_spi->transfer(addr | 0x80);
     s_spi->transfer(val);
     digitalWrite(MAX_CS, HIGH);
+    s_spi->endTransaction();
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
 }
 
 static uint8_t spi_read_reg(uint8_t addr) {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+    s_spi->beginTransaction(MAX_SPI_SETTINGS);
     digitalWrite(MAX_CS, LOW);
     s_spi->transfer(addr & 0x7F);
     uint8_t val = s_spi->transfer(0xFF);
     digitalWrite(MAX_CS, HIGH);
+    s_spi->endTransaction();
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     return val;
 }
 
 static uint16_t spi_read_reg16(uint8_t addr) {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+    s_spi->beginTransaction(MAX_SPI_SETTINGS);
     digitalWrite(MAX_CS, LOW);
     s_spi->transfer(addr & 0x7F);
     uint8_t msb = s_spi->transfer(0xFF);
     uint8_t lsb = s_spi->transfer(0xFF);
     digitalWrite(MAX_CS, HIGH);
+    s_spi->endTransaction();
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     return ((uint16_t)msb << 8) | lsb;
 }
@@ -117,7 +125,6 @@ void setup_sensor(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     digitalWrite(MAX_CS, HIGH);
 
     spi.begin(MAX_CLK, MAX_MISO, MAX_MOSI, MAX_CS);
-    spi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
 
     // Erst-Konfiguration: Bias aus, Auto aus, 3-Wire, 50Hz
     spi_write_reg(MAX31865_CONFIG_WRITE, STD_FLAGS);

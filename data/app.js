@@ -364,9 +364,12 @@ async function refreshSettings() {
 
   // SD-Info
   const sd = await api('GET', '/api/datalog/sdinfo');
-  if (sd) {
+  if (sd && sd.mounted) {
     document.getElementById('sd-free').textContent  = formatBytes(sd.free);
     document.getElementById('sd-total').textContent = formatBytes(sd.total);
+  } else {
+    document.getElementById('sd-free').textContent  = '–';
+    document.getElementById('sd-total').textContent = 'nicht erkannt';
   }
 
   // Dateien laden
@@ -382,7 +385,7 @@ async function refreshSettings() {
 }
 
 async function refreshFiles() {
-  const d = await api('GET', '/api/datalog/files');
+  const d = await api('GET', '/api/datalog/filelist');
   if (!d) return;
   const list = document.getElementById('file-list');
   list.innerHTML = d.files.map(f => `
@@ -451,8 +454,10 @@ async function setInterpolation() {
 }
 
 async function datalogStart() {
-  await api('POST', '/api/datalog/start', { interval_ms: 1000 });
-  toast('Aufzeichnung gestartet.'); refreshSettings();
+  const r = await api('POST', '/api/datalog/start', { interval_ms: 1000 });
+  if (r && r.ok) toast('Aufzeichnung gestartet.');
+  else toast(r?.error || 'Start fehlgeschlagen!');
+  refreshSettings();
 }
 
 async function datalogStop() {
@@ -466,6 +471,12 @@ async function deleteFile(name) {
   toast(name + ' gelöscht.'); refreshFiles();
 }
 
+async function mountSD() {
+  const r = await api('POST', '/api/datalog/mount');
+  if (r && r.ok) { toast('SD-Karte gemountet.'); refreshSettings(); }
+  else toast('SD-Karte nicht gefunden!');
+}
+
 async function deleteAllFiles() {
   if (!confirm('ALLE Dateien auf der SD-Karte löschen?')) return;
   await api('POST', '/api/datalog/delete_all', { confirm: true });
@@ -476,7 +487,7 @@ async function deleteAllFiles() {
 function formatBytes(b) {
   if (!b || b === 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return (b / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
 }

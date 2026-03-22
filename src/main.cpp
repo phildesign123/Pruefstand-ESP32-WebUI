@@ -54,6 +54,9 @@ void setup() {
     uart_mutex = xSemaphoreCreateMutex();
 
     // ── SPI-Bus initialisieren (VSPI: MAX31865 + SD) ─────────
+    // SD_CS sofort HIGH setzen damit SD-Karte nicht auf MAX31865-Traffic reagiert
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
     vspi.begin(MAX_CLK, MAX_MISO, MAX_MOSI, MAX_CS);
 
     // ── I2C-Bus initialisieren (NAU7802) ─────────────────────

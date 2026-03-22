@@ -94,7 +94,7 @@ static void make_filename(char *buf, size_t len) {
 
 // ── SD-Karte initialisieren ───────────────────────────────────
 
-static bool sd_mounted = false;
+static volatile bool sd_mounted = false;
 
 static bool sd_mount() {
     Serial.println("[DATALOG] SD-Karte wird gesucht...");
@@ -156,7 +156,7 @@ static void writer_task(void *arg) {
         // Warten: entweder Flush-Interval oder Signal vom Sampler
         xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(DATALOG_FLUSH_INTERVAL_S * 1000));
 
-        if (s_state == DATALOG_IDLE) continue;
+        if (s_state == DATALOG_IDLE || s_state == DATALOG_ERROR) continue;
         if (!sd_mounted)             continue;
         if (ring_count() == 0)       continue;
 
@@ -213,9 +213,9 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     s_spi_mutex = spi_mutex;
     s_flush_sem = xSemaphoreCreateBinary();
 
-    // SD-Karte wird nicht beim Boot gemountet (SD.begin blockiert ohne Karte).
-    // Mount über API: POST /api/datalog/mount oder beim ersten datalog_start
-    Serial.println("[DATALOG] SD-Mount verzögert (kein Auto-Mount beim Boot).");
+    // SD-Karte im Hintergrund mounten (SD.begin blockiert ohne Karte)
+    xTaskCreatePinnedToCore([](void*){ sd_mount(); vTaskDelete(nullptr); },
+                            "sd_mnt", 4096, nullptr, 1, nullptr, CORE_REALTIME);
 
     xTaskCreatePinnedToCore(sampler_task, "datalog_s", TASK_STACK_DATALOG_S,
                             nullptr, TASK_PRIO_DATALOG_S, nullptr, CORE_REALTIME);
@@ -257,9 +257,10 @@ bool datalog_start(uint32_t interval_ms) {
 }
 
 bool datalog_stop() {
-    s_state = DATALOG_IDLE;
+    s_state = DATALOG_STOPPING;
     xSemaphoreGive(s_flush_sem);  // Finalen Flush auslösen
-    vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(500));
+    s_state = DATALOG_IDLE;
     Serial.println("[DATALOG] Aufzeichnung gestoppt.");
     return true;
 }
@@ -276,14 +277,16 @@ DatalogState datalog_get_state()    { return s_state; }
 const char*  datalog_get_filename() { return s_filename; }
 
 int datalog_list_files(DatalogFileInfo *files, int max_files) {
-    if (!sd_mounted) return 0;
+    if (!sd_mounted) { Serial.println("[DATALOG] list_files: SD nicht gemountet"); return 0; }
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
 
     File root = SD.open("/");
+    if (!root) { Serial.println("[DATALOG] list_files: root open failed"); if (s_spi_mutex) xSemaphoreGive(s_spi_mutex); return 0; }
     int count = 0;
     while (count < max_files) {
         File f = root.openNextFile();
         if (!f) break;
+        Serial.printf("[DATALOG] list: '%s' dir=%d size=%u\n", f.name(), f.isDirectory(), (unsigned)f.size());
         if (!f.isDirectory() && strstr(f.name(), ".csv")) {
             snprintf(files[count].name, sizeof(files[count].name), "%s", f.name());
             files[count].size_bytes = f.size();
@@ -294,6 +297,7 @@ int datalog_list_files(DatalogFileInfo *files, int max_files) {
     }
     root.close();
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    Serial.printf("[DATALOG] list_files: %d Dateien gefunden\n", count);
     return count;
 }
 
@@ -315,7 +319,8 @@ bool datalog_delete_all() {
 }
 
 bool datalog_get_sd_info(DatalogSDInfo *info) {
-    if (!sd_mounted) { info->mounted = false; return false; }
+    memset(info, 0, sizeof(*info));
+    if (!sd_mounted) { return false; }
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
     info->total_bytes = SD.totalBytes();
     info->free_bytes  = SD.totalBytes() - SD.usedBytes();
