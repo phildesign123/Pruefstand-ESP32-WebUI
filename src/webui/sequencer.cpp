@@ -15,6 +15,7 @@ static int           s_seq_count     = 0;
 static volatile int  s_active_idx    = -1;
 static volatile SeqState s_state     = SEQ_IDLE;
 static volatile bool s_stop_req      = false;
+static volatile float s_remaining_s  = 0.0f;
 static portMUX_TYPE  s_mux           = portMUX_INITIALIZER_UNLOCKED;
 
 static void sequencer_task(void *arg) {
@@ -75,6 +76,7 @@ static void sequencer_task(void *arg) {
         Serial.printf("[SEQ] Sequenz %d: Extrudieren %.2f mm/s für %.1f s\n",
                       idx + 1, seq.speed_mm_s, seq.duration_s);
 
+        s_remaining_s = seq.duration_s;
         motor_move(seq.speed_mm_s, seq.duration_s, MOTOR_DIR_FORWARD);
 
         // Warten bis motor_task den Befehl übernommen hat (s_moving wird gesetzt)
@@ -85,14 +87,19 @@ static void sequencer_task(void *arg) {
                 if (xTaskGetTickCount() - t0 > pdMS_TO_TICKS(2000)) break;
             }
         }
-        // Warten bis Bewegung beendet ist
+        // Warten bis Bewegung beendet ist, Restzeit aktualisieren
         {
+            unsigned long run_start = millis();
             uint32_t timeout_ms = (uint32_t)(seq.duration_s * 1000.0f + 5000);
             TickType_t t0 = xTaskGetTickCount();
             while (motor_is_moving() && !s_stop_req) {
+                float elapsed = (millis() - run_start) / 1000.0f;
+                s_remaining_s = seq.duration_s - elapsed;
+                if (s_remaining_s < 0) s_remaining_s = 0;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 if (xTaskGetTickCount() - t0 > pdMS_TO_TICKS(timeout_ms)) break;
             }
+            s_remaining_s = 0;
         }
 
         if (s_stop_req) break;
@@ -169,6 +176,7 @@ void sequencer_stop() {
 
 SeqState    sequencer_get_state()        { return s_state; }
 int         sequencer_get_active_index() { return s_active_idx; }
+float       sequencer_get_remaining_s()  { return s_remaining_s; }
 
 const char* sequencer_state_string() {
     switch (s_state) {

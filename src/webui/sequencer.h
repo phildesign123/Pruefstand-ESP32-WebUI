@@ -34,4 +34,5 @@ void sequencer_stop();
 // Status
 SeqState    sequencer_get_state();
 int         sequencer_get_active_index();
+float       sequencer_get_remaining_s();
 const char* sequencer_state_string();

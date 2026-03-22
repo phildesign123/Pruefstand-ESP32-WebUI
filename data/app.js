@@ -102,11 +102,13 @@ function updateDashboard(d) {
   // Gewicht
   document.getElementById('weight-val').innerHTML =
     `${d.weight.toFixed(2)}<span class="unit"> g</span>`;
+  document.getElementById('motor-speed-val').innerHTML =
+    `${d.speed.toFixed(2)}<span class="unit"> mm/s</span>`;
   document.getElementById('motor-status').textContent =
-    `Motor: ${d.motor ? 'AN' : 'AUS'}  |  ${d.speed.toFixed(2)} mm/s`;
+    `Motor: ${d.motor ? 'AN' : 'AUS'}`;
 
   // Sequencer
-  seqState = { state: d.seq_state, active: d.seq };
+  seqState = { state: d.seq_state, active: d.seq, remain: d.seq_remain || 0 };
   updateSeqTable();
 
   // Chart-Daten
@@ -155,7 +157,7 @@ function drawChart() {
   const ctx  = chartCanvas.getContext('2d');
   const W    = chartCanvas.width;
   const H    = chartCanvas.height;
-  const pad  = { l: 50, r: 50, t: 10, b: 25 };
+  const pad  = { l: 50, r: 60, t: 10, b: 25 };
   const n    = chartData.ts.length;
 
   ctx.clearRect(0, 0, W, H);
@@ -168,16 +170,18 @@ function drawChart() {
   const tMin = chartData.ts[0];
   const tMax = chartData.ts[n - 1];
 
-  // Temp Y-Achse (links)
-  const tempMin = 0, tempMax = Math.max(300, ...chartData.temp) * 1.05;
-  // Weight/Speed Y-Achse (rechts)
-  const wMax = Math.max(1, ...chartData.weight, ...chartData.speed) * 1.1;
+  // Feste Skalen
+  const tempMin = 0, tempMax = 280;
+  const speedMin = 0, speedMax = 10;
+  // Gewicht: automatisch skaliert
+  const weightMax = Math.max(1, ...chartData.weight) * 1.1;
 
   function tx(t) { return pad.l + (t - tMin) / (tMax - tMin) * (W - pad.l - pad.r); }
   function tyL(v, mn, mx) { return pad.t + (1 - (v - mn) / (mx - mn)) * (H - pad.t - pad.b); }
 
   // Grid
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + i * (H - pad.t - pad.b) / 4;
@@ -194,27 +198,43 @@ function drawChart() {
     ctx.stroke();
   }
 
-  if (showTemp)   drawLine(chartData.temp,   '#6366f1', v => tyL(v, tempMin, tempMax));
-  if (showWeight) drawLine(chartData.weight, '#10b981', v => tyL(v, 0, wMax));
-  if (showSpeed)  drawLine(chartData.speed,  '#f59e0b', v => tyL(v, 0, wMax));
+  if (showTemp)   drawLine(chartData.temp,   '#ef4444', v => tyL(v, tempMin, tempMax));
+  if (showWeight) drawLine(chartData.weight, '#10b981', v => tyL(v, 0, weightMax));
+  if (showSpeed)  drawLine(chartData.speed,  '#f59e0b', v => tyL(v, speedMin, speedMax));
 
   // Achsbeschriftung
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = '10px Arial';
-  ctx.textAlign = 'right';
-  [0, 0.25, 0.5, 0.75, 1].forEach(f => {
-    const v = tempMin + f * (tempMax - tempMin);
-    const y = pad.t + (1 - f) * (H - pad.t - pad.b);
-    ctx.fillText(v.toFixed(0) + '°', pad.l - 3, y + 3);
-  });
+  // Linke Achse: Temperatur (indigo) – fest 0–280
+  if (showTemp) {
+    ctx.fillStyle = '#ef4444';
+    ctx.textAlign = 'right';
+    [0, 70, 140, 210, 280].forEach(v => {
+      const y = tyL(v, tempMin, tempMax);
+      ctx.fillText(v + '°C', pad.l - 3, y + 3);
+    });
+  }
+  // Rechte Achse(n)
   ctx.textAlign = 'left';
-  [0, 0.5, 1].forEach(f => {
-    const v = f * wMax;
-    const y = pad.t + (1 - f) * (H - pad.t - pad.b);
-    ctx.fillText(v.toFixed(0), W - pad.r + 3, y + 3);
-  });
+  const rx = W - pad.r + 3;
+  if (showWeight) {
+    ctx.fillStyle = '#10b981';
+    [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+      const v = f * weightMax;
+      const y = pad.t + (1 - f) * (H - pad.t - pad.b);
+      ctx.fillText(v.toFixed(0) + 'g', rx, y + 3);
+    });
+  }
+  if (showSpeed) {
+    ctx.fillStyle = '#f59e0b';
+    const off = showWeight ? 10 : 0;
+    [0, 2.5, 5, 7.5, 10].forEach(v => {
+      const y = tyL(v, speedMin, speedMax);
+      ctx.fillText(v.toFixed(1), rx, y + 3 + off);
+    });
+  }
 
   // Zeitachse
+  ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
   ctx.textAlign = 'center';
   const relMax = tMax - tMin;
   for (let i = 0; i <= 5; i++) {
@@ -275,13 +295,16 @@ function updateSeqTable() {
   const statusIcons = { idle:'·', heating:'⏳', running:'►', done:'✓', error:'✗', next:'»' };
 
   tbody.innerHTML = sequences.map((s, i) => {
-    const icon = i === seqState.active ? statusIcons[seqState.state] || '►' : '·';
-    const cls  = i === seqState.active ? 'active-seq' : '';
+    const isActive = i === seqState.active;
+    const icon = isActive ? statusIcons[seqState.state] || '►' : '·';
+    const cls  = isActive ? 'active-seq' : '';
+    const remain = (isActive && seqState.state === 'running' && seqState.remain > 0)
+      ? `${seqState.remain.toFixed(1)} / ${s.duration_s}` : `${s.duration_s}`;
     return `<tr class="${cls}">
       <td>${i + 1}</td>
       <td>${s.temp_c}</td>
       <td>${s.speed_mm_s}</td>
-      <td>${s.duration_s}</td>
+      <td>${remain}</td>
       <td class="seq-status">${icon}</td>
       <td><button class="secondary" style="padding:3px 8px" onclick="seqDelete(${i})">✕</button></td>
     </tr>`;

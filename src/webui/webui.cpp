@@ -46,7 +46,7 @@ static void ws_push_task(void *arg) {
         snprintf(buf, sizeof(buf),
             "{\"t\":%lu,\"temp\":%.2f,\"temp_target\":%.2f,\"duty\":%.3f,"
             "\"weight\":%.3f,\"speed\":%.2f,\"motor\":%d,"
-            "\"seq\":%d,\"seq_state\":\"%s\"}",
+            "\"seq\":%d,\"seq_state\":\"%s\",\"seq_remain\":%.1f}",
             (unsigned long)millis(),
             hotend_get_temperature(),
             hotend_get_target(),
@@ -55,7 +55,8 @@ static void ws_push_task(void *arg) {
             motor_get_current_speed(),
             motor_is_moving() ? 1 : 0,
             sequencer_get_active_index(),
-            sequencer_state_string());
+            sequencer_state_string(),
+            sequencer_get_remaining_s());
 
         s_ws.textAll(buf);
     }

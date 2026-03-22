@@ -72,14 +72,17 @@ nav {
   background: var(--surface);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
-  padding: 0 24px;
+  padding: 20px 12px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 4px;
-  height: 56px;
-  border-bottom: 1px solid var(--border);
-  position: sticky;
+  width: 160px;
+  position: fixed;
   top: 0;
+  left: 0;
+  bottom: 0;
+  border-right: 1px solid var(--border);
   z-index: 100;
   transition: background 0.4s var(--ease);
 }
@@ -90,13 +93,14 @@ nav .logo {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-right: 20px;
+  margin-bottom: 16px;
   letter-spacing: -0.5px;
+  text-align: center;
 }
 nav a {
   color: var(--text-dim);
   text-decoration: none;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
@@ -109,9 +113,9 @@ nav a.active {
 }
 nav a:hover:not(.active) { color: var(--text); background: rgba(99,102,241,0.08); }
 
-/* Theme Toggle */
+/* Theme Toggle & WS-Dot am unteren Rand */
+.nav-bottom { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .theme-toggle {
-  margin-left: auto;
   width: 36px; height: 36px;
   border-radius: 50%;
   background: var(--input-bg);
@@ -132,7 +136,6 @@ nav a:hover:not(.active) { color: var(--text); background: rgba(99,102,241,0.08)
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--danger);
-  margin-left: 12px;
   transition: all 0.3s var(--ease);
   box-shadow: 0 0 8px var(--danger-glow);
   animation: pulse 2s ease-in-out infinite;
@@ -145,14 +148,20 @@ nav a:hover:not(.active) { color: var(--text); background: rgba(99,102,241,0.08)
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 /* ═══════ Layout ═══════ */
-main { padding: 24px; max-width: 1200px; margin: 0 auto; }
-.page { display: none; }
+main {
+  margin-left: 160px;
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+}
+.page { max-width: 1200px; width: 100%; display: none; }
 .page.active { display: block; animation: slideUp 0.35s var(--ease); }
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: none; }
 }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 
 /* ═══════ 3. Glasmorphism Cards ═══════ */
 .card, .section {
@@ -169,6 +178,8 @@ main { padding: 24px; max-width: 1200px; margin: 0 auto; }
 .card:hover, .section:hover {
   background: var(--card-hover);
   box-shadow: var(--shadow-lg);
+}
+.card:hover:not(:has(select:focus, input:focus)), .section:hover:not(:has(select:focus, input:focus)) {
   transform: translateY(-2px);
 }
 .card-title {
@@ -294,9 +305,11 @@ button.secondary {
 button.secondary:hover { background: var(--card-hover); color: var(--text); box-shadow: none; }
 
 /* ═══════ Jog-Buttons ═══════ */
-.jog-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+.jog-row { display: flex; gap: 4px; flex-wrap: wrap; margin: 14px 0; }
 .jog-row button {
-  min-width: 58px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
   background: var(--input-bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -415,11 +428,16 @@ tr.active-seq td {
 .recording { animation: recording-pulse 2s var(--ease) infinite; }
 
 /* ═══════ 7. Responsive ═══════ */
+@media (max-width: 900px) {
+  .grid3 { grid-template-columns: 1fr; }
+}
 @media (max-width: 600px) {
   .grid2 { grid-template-columns: 1fr; }
-  nav { padding: 0 14px; gap: 2px; }
+  nav { position: static; flex-direction: row; width: 100%; padding: 8px 14px; border-right: none; border-bottom: 1px solid var(--border); }
+  nav .logo { margin-bottom: 0; margin-right: 12px; }
+  .nav-bottom { margin-top: 0; margin-left: auto; }
   nav a { padding: 6px 10px; font-size: 12px; }
-  main { padding: 14px; }
+  main { padding: 14px; margin-left: 0; }
   .card, .section { padding: 16px; }
   .big-val { font-size: 36px; }
   .jog-row button { min-width: 44px; padding: 7px 10px; font-size: 12px; }

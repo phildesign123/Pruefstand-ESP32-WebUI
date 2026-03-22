@@ -223,6 +223,9 @@ bool motor_move_distance(float speed_mm_s, float distance_mm, MotorDir dir) {
 }
 
 void motor_stop() {
+    // RMT sofort stoppen – befreit do_move() aus motor_rmt_wait()
+    motor_rmt_stop();
+    // CMD_STOP in Queue damit motor_task die Flags aufräumt
     MotorCmd cmd; cmd.type = CMD_STOP;
     xQueueSendToFront(s_cmd_queue, &cmd, pdMS_TO_TICKS(10));
 }
