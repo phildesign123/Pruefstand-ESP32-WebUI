@@ -58,7 +58,18 @@ static void ws_push_task(void *arg) {
             sequencer_state_string(),
             sequencer_get_remaining_s());
 
-        s_ws.textAll(buf);
+        // Nur senden wenn kein Client eine volle Queue hat
+        // Verhindert "Too many messages queued" → Connection-Drop
+        bool all_ready = true;
+        for (auto &c : s_ws.getClients()) {
+            if (c.status() == WS_CONNECTED && c.queueIsFull()) {
+                all_ready = false;
+                break;
+            }
+        }
+        if (all_ready) {
+            s_ws.textAll(buf);
+        }
     }
 }
 
@@ -255,8 +266,10 @@ static void api_datalog_status(AsyncWebServerRequest *req) {
 
 static void api_datalog_start(AsyncWebServerRequest *req, JsonVariant &body) {
     uint32_t iv = body["interval_ms"] | (uint32_t)DATALOG_INTERVAL_MS;
-    bool ok = datalog_start(iv);
-    Serial.printf("[WEBUI] datalog_start(%lu) => %s\n", (unsigned long)iv, ok ? "OK" : "FAIL");
+    const char *fname = body["filename"] | (const char*)nullptr;
+    bool ok = datalog_start(iv, fname);
+    Serial.printf("[WEBUI] datalog_start(%lu, %s) => %s\n",
+                  (unsigned long)iv, fname ? fname : "auto", ok ? "OK" : "FAIL");
     req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"start failed – SD mounted?\"}");
 }
 

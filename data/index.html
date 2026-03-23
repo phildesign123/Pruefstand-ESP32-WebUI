@@ -121,6 +121,26 @@
       <button class="secondary" onclick="seqClear()">🗑 Alle löschen</button>
     </div>
   </div>
+
+  <!-- SD-Aufzeichnung -->
+  <div class="card">
+    <div class="card-title">SD-Aufzeichnung</div>
+    <div class="setting-row" style="gap:8px;flex-wrap:wrap">
+      <input type="text" id="rec-name" placeholder="Dateiname (optional)" style="flex:1;min-width:140px">
+      <button onclick="recStart()">▶ Start</button>
+      <button class="secondary" onclick="recStop()">⏹ Stop</button>
+      <span id="rec-state" class="badge" style="margin-left:4px">idle</span>
+    </div>
+    <div class="setting-row" style="margin-top:6px">
+      <span class="setting-label">SD:</span>
+      <span id="rec-sd-free">–</span> frei / <span id="rec-sd-total">–</span>
+      <button class="secondary" onclick="mountSD();refreshRec()" style="margin-left:8px;padding:3px 8px;font-size:0.8em">Mounten</button>
+    </div>
+    <div id="rec-file-list" class="file-list" style="margin-top:10px"></div>
+    <div style="margin-top:8px">
+      <button class="danger" style="font-size:0.85em" onclick="deleteAllFiles();setTimeout(refreshRec,500)">Alle Dateien löschen</button>
+    </div>
+  </div>
 </div><!-- /dashboard -->
 
 <!-- ════════════ EINSTELLUNGEN ════════════ -->

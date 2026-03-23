@@ -22,6 +22,7 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   if (name === 'settings') refreshSettings();
   if (name === 'wifi') refreshWifi();
+  if (name === 'dashboard') refreshRec();
 }
 
 // ── Toast ────────────────────────────────────────────────────
@@ -454,7 +455,7 @@ async function setInterpolation() {
 }
 
 async function datalogStart() {
-  const r = await api('POST', '/api/datalog/start', { interval_ms: 1000 });
+  const r = await api('POST', '/api/datalog/start', { interval_ms: 100 });
   if (r && r.ok) toast('Aufzeichnung gestartet.');
   else toast(r?.error || 'Start fehlgeschlagen!');
   refreshSettings();
@@ -481,6 +482,55 @@ async function deleteAllFiles() {
   if (!confirm('ALLE Dateien auf der SD-Karte löschen?')) return;
   await api('POST', '/api/datalog/delete_all', { confirm: true });
   toast('Alle Dateien gelöscht.'); refreshFiles();
+}
+
+// ── Dashboard SD-Aufzeichnung ─────────────────────────────────
+
+async function recStart() {
+  const name = document.getElementById('rec-name').value.trim();
+  const body = { interval_ms: 100 };
+  if (name) body.filename = name;
+  const r = await api('POST', '/api/datalog/start', body);
+  if (r && r.ok) toast('Aufzeichnung gestartet.');
+  else toast(r?.error || 'Start fehlgeschlagen!');
+  refreshRec();
+}
+
+async function recStop() {
+  await api('POST', '/api/datalog/stop');
+  toast('Aufzeichnung gestoppt.');
+  refreshRec();
+}
+
+async function refreshRec() {
+  // SD-Info
+  const sd = await api('GET', '/api/datalog/sdinfo');
+  if (sd && sd.mounted) {
+    document.getElementById('rec-sd-free').textContent  = formatBytes(sd.free);
+    document.getElementById('rec-sd-total').textContent = formatBytes(sd.total);
+  } else {
+    document.getElementById('rec-sd-free').textContent  = '–';
+    document.getElementById('rec-sd-total').textContent = 'nicht erkannt';
+  }
+  // Status
+  const ls = await api('GET', '/api/datalog/status');
+  if (ls) {
+    const b = document.getElementById('rec-state');
+    b.textContent = ls.state;
+    b.className = 'badge ' + (ls.state === 'recording' ? 'ok' : 'secondary');
+  }
+  // Dateiliste
+  const d = await api('GET', '/api/datalog/filelist');
+  if (!d) return;
+  const list = document.getElementById('rec-file-list');
+  list.innerHTML = d.files.map(f => `
+    <div class="file-row">
+      <span class="file-name">${f.name} ${f.active ? '● ' : ''}</span>
+      <span class="file-size">${formatBytes(f.size)}</span>
+      <a href="/api/datalog/files/${f.name}" download>
+        <button>⬇</button></a>
+      <button class="danger" onclick="deleteFile('${f.name}');setTimeout(refreshRec,500)">🗑</button>
+    </div>`).join('');
 }
 
 // ── Hilfsfunktionen ───────────────────────────────────────────

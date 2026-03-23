@@ -89,9 +89,9 @@
 #define LOAD_CELL_CAL_SAMPLES   80
 
 // ── Datenlogger / SD-Karte ───────────────────────────────────
-#define DATALOG_INTERVAL_MS     1000
-#define DATALOG_BUFFER_SIZE     128
-#define DATALOG_FLUSH_INTERVAL_S 5
+#define DATALOG_INTERVAL_MS      100           // 10 Hz (Gewicht)
+#define DATALOG_BUFFER_SIZE     8192          // RAM-Puffer in Bytes für CSV-Zeilen
+#define DATALOG_FLUSH_SAMPLES    50           // Alle N Samples auf SD schreiben + flush (50 = alle 5s bei 10Hz)
 #define DATALOG_MAX_FILE_SIZE_MB 10
 #define DATALOG_MAX_FILES        100
 

@@ -1,6 +1,7 @@
 #include "datalog.h"
 #include "../config.h"
 #include "../hotend/hotend.h"
+#include "../hotend/sensor.h"
 #include "../load_cell/load_cell.h"
 #include "../motor/motor.h"
 #include <SD.h>
@@ -12,68 +13,44 @@
 #include "freertos/semphr.h"
 
 // =============================================================
-// Datenlogger: Ringpuffer im RAM → CSV auf SD-Karte
-// Zwei Tasks: Sampler (Prio 3) + Writer (Prio 2)
-// SPI-Mutex wird geteilt mit MAX31865
+// Datenlogger: Zwei Tasks auf getrennten Cores
+//   Sampler (Core 1, Prio 3): Sensoren lesen → Queue
+//   Writer  (Core 0, Prio 2): Queue → RAM-Puffer → SD-Karte
+// SD-Writes blockieren den Mess-Takt NICHT mehr.
 // =============================================================
 
-struct LogEntry {
-    char    timestamp[24];
-    uint32_t time_ms;
-    float    temperature_c;
-    float    weight_g;
-    float    speed_mm_s;
-    uint8_t  motor_active;
+// ── Sample-Struct für die Queue ──────────────────────────────
+
+struct SampleData {
+    uint32_t sample_seq;
+    uint32_t millis_ms;
+    float    gewicht;
+    float    temperatur;
+    float    motor_geschwindigkeit;
+    uint8_t  error_flags;
+    uint32_t loop_duration_us;
 };
 
-// ── Ringpuffer ───────────────────────────────────────────────
+// ── CSV-Header ───────────────────────────────────────────────
 
-static LogEntry s_ring[DATALOG_BUFFER_SIZE];
-static volatile int s_ring_head = 0;   // Writer liest hier
-static volatile int s_ring_tail = 0;   // Sampler schreibt hier
-static portMUX_TYPE s_ring_mux = portMUX_INITIALIZER_UNLOCKED;
-
-static int ring_count() {
-    int d = s_ring_tail - s_ring_head;
-    return (d < 0) ? d + DATALOG_BUFFER_SIZE : d;
-}
-
-static bool ring_push(const LogEntry &e) {
-    portENTER_CRITICAL(&s_ring_mux);
-    int next = (s_ring_tail + 1) % DATALOG_BUFFER_SIZE;
-    if (next == s_ring_head) {
-        // Überlauf: ältesten überschreiben
-        s_ring_head = (s_ring_head + 1) % DATALOG_BUFFER_SIZE;
-        Serial.println("[DATALOG] Ringpuffer-Überlauf!");
-    }
-    s_ring[s_ring_tail] = e;
-    s_ring_tail = next;
-    portEXIT_CRITICAL(&s_ring_mux);
-    return true;
-}
-
-static bool ring_pop(LogEntry *e) {
-    portENTER_CRITICAL(&s_ring_mux);
-    if (s_ring_head == s_ring_tail) {
-        portEXIT_CRITICAL(&s_ring_mux);
-        return false;
-    }
-    *e = s_ring[s_ring_head];
-    s_ring_head = (s_ring_head + 1) % DATALOG_BUFFER_SIZE;
-    portEXIT_CRITICAL(&s_ring_mux);
-    return true;
-}
+static const char CSV_HEADER[] =
+    "sample_seq,millis_ms,gewicht,temperatur,motor_geschwindigkeit,"
+    "error_flags,sd_write_us,loop_duration_us";
 
 // ── Status-Variablen ─────────────────────────────────────────
 
 static SPIClass         *s_spi          = nullptr;
 static SemaphoreHandle_t s_spi_mutex    = nullptr;
 static volatile DatalogState s_state    = DATALOG_IDLE;
-static volatile uint32_t s_interval_ms = DATALOG_INTERVAL_MS;
+static volatile uint32_t s_interval_ms  = DATALOG_INTERVAL_MS;
 static char              s_filename[64] = {};
-static uint32_t          s_start_ms    = 0;
-static SemaphoreHandle_t s_flush_sem   = nullptr;
+static uint32_t          s_start_ms     = 0;
 static Preferences       s_prefs;
+static volatile uint32_t s_sample_seq   = 0;
+
+// Queue: Sampler → Writer
+static QueueHandle_t     s_sample_queue = nullptr;
+#define SAMPLE_QUEUE_LEN  100   // 10 Sekunden Puffer bei 10 Hz
 
 // ── Dateiname generieren ─────────────────────────────────────
 
@@ -92,7 +69,7 @@ static void make_filename(char *buf, size_t len) {
     }
 }
 
-// ── SD-Karte initialisieren ───────────────────────────────────
+// ── SD-Karte initialisieren ─────────────────────────────────
 
 static volatile bool sd_mounted = false;
 
@@ -107,7 +84,9 @@ static bool sd_mount() {
     return ok;
 }
 
-// ── Sampler-Task ─────────────────────────────────────────────
+// ── Sampler-Task (Core 1, Prio HOCH) ─────────────────────────
+// Liest Sensoren bei 10 Hz, schreibt in Queue.
+// Greift NICHT auf die SD-Karte zu.
 
 static void sampler_task(void *arg) {
     TickType_t last_wake = xTaskGetTickCount();
@@ -117,111 +96,152 @@ static void sampler_task(void *arg) {
 
         if (s_state != DATALOG_RECORDING) continue;
 
-        LogEntry e;
-        uint32_t now_ms = millis() - s_start_ms;
+        uint32_t loop_start = micros();
 
-        // Zeitstempel
-        struct tm ti;
-        if (getLocalTime(&ti)) {
-            snprintf(e.timestamp, sizeof(e.timestamp),
-                     "%04d-%02d-%02dT%02d:%02d:%02d",
-                     ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday,
-                     ti.tm_hour, ti.tm_min, ti.tm_sec);
-        } else {
-            snprintf(e.timestamp, sizeof(e.timestamp), "T+%lus",
-                     (unsigned long)(now_ms / 1000));
-        }
+        // Sensoren lesen (alles gecachte Werte, ~5 µs)
+        float gewicht = load_cell_get_weight_g();
+        float temp    = hotend_get_temperature();
+        float speed   = motor_get_current_speed();
 
-        e.time_ms       = now_ms;
-        e.temperature_c = hotend_get_temperature();
-        e.weight_g      = load_cell_get_weight_g();
-        e.speed_mm_s    = motor_get_current_speed();
-        e.motor_active  = motor_is_moving() ? 1 : 0;
+        uint8_t flags = 0;
+        if (hotend_has_fault())  flags |= 0x01;
+        if (sensor_has_fault())  flags |= 0x02;
+        if (!sd_mounted)         flags |= 0x04;
 
-        ring_push(e);
+        uint32_t loop_us = micros() - loop_start;
 
-        // Flush-Signal wenn Puffer > 75 %
-        if (ring_count() > (DATALOG_BUFFER_SIZE * 3 / 4)) {
-            xSemaphoreGive(s_flush_sem);
+        SampleData sample = {
+            .sample_seq          = s_sample_seq++,
+            .millis_ms           = millis(),
+            .gewicht             = gewicht,
+            .temperatur          = temp,
+            .motor_geschwindigkeit = speed,
+            .error_flags         = flags,
+            .loop_duration_us    = loop_us,
+        };
+
+        // Non-blocking in Queue schreiben
+        if (xQueueSend(s_sample_queue, &sample, 0) != pdTRUE) {
+            // Queue voll — Writer kommt nicht hinterher
+            // Nächstes Sample bekommt das Flag
         }
     }
 }
 
-// ── Writer-Task ───────────────────────────────────────────────
+// ── Writer-Task (Core 0, Prio NIEDRIG) ───────────────────────
+// Liest Samples aus Queue, sammelt in RAM-Puffer, schreibt auf SD.
+// Kann beliebig lange blockieren — stört den Sampler nicht.
+
+static File   s_log_file;
+static char   s_buf[DATALOG_BUFFER_SIZE];
+static size_t s_buf_pos = 0;
 
 static void writer_task(void *arg) {
-    TickType_t last_flush = xTaskGetTickCount();
+    SampleData sample;
+    int      lines_in_buf   = 0;
+    uint32_t last_sd_write_us = 0;
+    size_t   bytes_since_rot  = 0;
 
     for (;;) {
-        // Warten: entweder Flush-Interval oder Signal vom Sampler
-        xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(DATALOG_FLUSH_INTERVAL_S * 1000));
-
-        if (s_state == DATALOG_IDLE || s_state == DATALOG_ERROR) continue;
-        if (!sd_mounted)             continue;
-        if (ring_count() == 0)       continue;
-
-        // Zeilen formatieren (außerhalb Mutex)
-        static char lines[DATALOG_BUFFER_SIZE][96];
-        int  nlines = 0;
-        LogEntry e;
-        while (ring_pop(&e) && nlines < DATALOG_BUFFER_SIZE) {
-            snprintf(lines[nlines], 96, "%s,%lu,%.2f,%.3f,%.2f,%d\n",
-                     e.timestamp, (unsigned long)e.time_ms,
-                     e.temperature_c, e.weight_g, e.speed_mm_s, e.motor_active);
-            nlines++;
+        // Auf Sample warten (blockiert bis Daten da)
+        if (xQueueReceive(s_sample_queue, &sample, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            // Timeout — kein Sample bekommen (nicht recording oder idle)
+            // Restpuffer schreiben wenn Aufzeichnung gestoppt
+            if (s_state != DATALOG_RECORDING && s_buf_pos > 0) {
+                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
+                if (!s_log_file) s_log_file = SD.open(s_filename, FILE_APPEND);
+                if (s_log_file) {
+                    s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                    s_log_file.flush();
+                    s_log_file.close();
+                    s_buf_pos = 0;
+                }
+                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            }
+            continue;
         }
 
-        if (nlines == 0) continue;
+        // CSV-Zeile in RAM-Puffer formatieren
+        char line[150];
+        int len = snprintf(line, sizeof(line),
+                 "%lu,%lu,%.3f,%.2f,%.2f,%u,%lu,%lu\n",
+                 (unsigned long)sample.sample_seq,
+                 (unsigned long)sample.millis_ms,
+                 sample.gewicht, sample.temperatur,
+                 sample.motor_geschwindigkeit,
+                 (unsigned)sample.error_flags,
+                 (unsigned long)last_sd_write_us,
+                 (unsigned long)sample.loop_duration_us);
 
-        // SD-Karte beschreiben (unter Mutex)
-        if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(200));
-        File f = SD.open(s_filename, FILE_APPEND);
-        if (f) {
-            for (int i = 0; i < nlines; i++) f.print(lines[i]);
-            f.flush();
-            f.close();
-        } else {
-            s_state = DATALOG_ERROR;
+        if (len > 0 && s_buf_pos + len < sizeof(s_buf)) {
+            memcpy(s_buf + s_buf_pos, line, len);
+            s_buf_pos += len;
+            bytes_since_rot += len;
         }
-        if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+        lines_in_buf++;
+        last_sd_write_us = 0;
+
+        // Alle N Samples oder bei fast vollem Puffer: auf SD schreiben
+        bool need_flush = (lines_in_buf >= DATALOG_FLUSH_SAMPLES)
+                       || (s_buf_pos + 150 > sizeof(s_buf));
+
+        if (need_flush && sd_mounted) {
+            if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+
+            if (!s_log_file) {
+                s_log_file = SD.open(s_filename, FILE_APPEND);
+            }
+            if (s_log_file) {
+                uint32_t t0 = micros();
+                s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                s_log_file.flush();
+                last_sd_write_us = micros() - t0;
+                s_buf_pos = 0;
+            } else {
+                s_state = DATALOG_ERROR;
+            }
+
+            if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            lines_in_buf = 0;
+        }
 
         // Datei-Rotation prüfen
-        if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(100));
-        File info = SD.open(s_filename, FILE_READ);
-        if (info) {
-            size_t sz = info.size();
-            info.close();
-            if (sz >= (size_t)DATALOG_MAX_FILE_SIZE_MB * 1024 * 1024) {
-                char new_name[72];
-                make_filename(new_name, sizeof(new_name));
-                strncpy(s_filename, new_name, sizeof(s_filename));
-                File header = SD.open(s_filename, FILE_WRITE);
-                if (header) {
-                    header.println("timestamp,time_ms,temperature_c,weight_g,speed_mm_s,motor_active");
-                    header.close();
-                }
-            }
+        if (bytes_since_rot >= (size_t)DATALOG_MAX_FILE_SIZE_MB * 1024 * 1024) {
+            if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
+            if (s_log_file) { s_log_file.flush(); s_log_file.close(); }
+            char new_name[72];
+            make_filename(new_name, sizeof(new_name));
+            strncpy(s_filename, new_name, sizeof(s_filename));
+            s_log_file = SD.open(s_filename, FILE_WRITE);
+            if (s_log_file) s_log_file.println(CSV_HEADER);
+            if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            bytes_since_rot = 0;
         }
-        if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     }
 }
 
 // ── Öffentliche API ──────────────────────────────────────────
 
 bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
-    s_spi      = &spi;
+    s_spi       = &spi;
     s_spi_mutex = spi_mutex;
-    s_flush_sem = xSemaphoreCreateBinary();
 
-    // SD-Karte im Hintergrund mounten (SD.begin blockiert ohne Karte)
+    s_sample_queue = xQueueCreate(SAMPLE_QUEUE_LEN, sizeof(SampleData));
+
+    // SD-Karte im Hintergrund mounten (auf Core 0, wo auch der Writer läuft)
     xTaskCreatePinnedToCore([](void*){ sd_mount(); vTaskDelete(nullptr); },
-                            "sd_mnt", 4096, nullptr, 1, nullptr, CORE_REALTIME);
+                            "sd_mnt", 4096, nullptr, 1, nullptr, CORE_WIFI);
 
+    // Sampler: Core 1 (Realtime), hohe Priorität
     xTaskCreatePinnedToCore(sampler_task, "datalog_s", TASK_STACK_DATALOG_S,
                             nullptr, TASK_PRIO_DATALOG_S, nullptr, CORE_REALTIME);
-    xTaskCreatePinnedToCore(writer_task,  "datalog_w", TASK_STACK_DATALOG_W,
-                            nullptr, TASK_PRIO_DATALOG_W, nullptr, CORE_REALTIME);
-    Serial.println("[DATALOG] Initialisiert.");
+
+    // Writer: Core 0, niedrige Priorität
+    // SD-Writes blockieren nie den Sampler auf Core 1.
+    xTaskCreatePinnedToCore(writer_task, "datalog_w", TASK_STACK_DATALOG_W,
+                            nullptr, TASK_PRIO_DATALOG_W, nullptr, CORE_WIFI);
+
+    Serial.println("[DATALOG] Initialisiert (Sampler Core1, Writer Core0).");
     return true;
 }
 
@@ -230,24 +250,58 @@ bool datalog_mount_sd() {
     return sd_mount();
 }
 
-bool datalog_start(uint32_t interval_ms) {
+bool datalog_start(uint32_t interval_ms, const char *filename) {
     if (!sd_mounted) {
         Serial.println("[DATALOG] Keine SD-Karte. Bitte erst einstecken und mounten.");
         return false;
     }
-    if (interval_ms >= 100 && interval_ms <= 60000) s_interval_ms = interval_ms;
+    if (interval_ms == 0) interval_ms = DATALOG_INTERVAL_MS;
+    if (interval_ms >= 10 && interval_ms <= 60000) s_interval_ms = interval_ms;
+    Serial.printf("[DATALOG] Intervall: %lu ms\n", (unsigned long)s_interval_ms);
 
-    make_filename(s_filename, sizeof(s_filename));
+    if (filename && filename[0]) {
+        // Benutzerdefinierter Dateiname
+        if (filename[0] == '/')
+            snprintf(s_filename, sizeof(s_filename), "%s", filename);
+        else
+            snprintf(s_filename, sizeof(s_filename), "/%s", filename);
+        // .csv anhängen falls nicht vorhanden
+        if (!strstr(s_filename, ".csv")) {
+            size_t l = strlen(s_filename);
+            if (l + 4 < sizeof(s_filename)) strcat(s_filename, ".csv");
+        }
+    } else {
+        make_filename(s_filename, sizeof(s_filename));
+    }
     s_start_ms = millis();
+    s_sample_seq = 0;
+    s_buf_pos = 0;
+
+    // Queue leeren
+    SampleData dummy;
+    while (xQueueReceive(s_sample_queue, &dummy, 0) == pdTRUE) {}
 
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
-    File f = SD.open(s_filename, FILE_WRITE);
-    if (!f) {
+    if (s_log_file) { s_log_file.flush(); s_log_file.close(); }
+    s_log_file = SD.open(s_filename, FILE_WRITE);
+    if (!s_log_file) {
         if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
         return false;
     }
-    f.println("timestamp,time_ms,temperature_c,weight_g,speed_mm_s,motor_active");
-    f.close();
+    s_log_file.println(CSV_HEADER);
+    s_log_file.flush();
+
+    // SD-Karte aufwärmen: Dummy-Block erzwingt Cluster-Allokation vorab
+    size_t header_end = s_log_file.position();
+    {
+        char warmup[DATALOG_BUFFER_SIZE];
+        memset(warmup, ' ', sizeof(warmup));
+        warmup[sizeof(warmup) - 1] = '\n';
+        s_log_file.write((const uint8_t*)warmup, sizeof(warmup));
+        s_log_file.flush();
+    }
+    s_log_file.seek(header_end);
+
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
 
     s_state = DATALOG_RECORDING;
@@ -258,8 +312,7 @@ bool datalog_start(uint32_t interval_ms) {
 
 bool datalog_stop() {
     s_state = DATALOG_STOPPING;
-    xSemaphoreGive(s_flush_sem);  // Finalen Flush auslösen
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(1500));  // Writer-Task hat 1s Timeout + Flush-Zeit
     s_state = DATALOG_IDLE;
     Serial.println("[DATALOG] Aufzeichnung gestoppt.");
     return true;
@@ -268,7 +321,7 @@ bool datalog_stop() {
 bool datalog_pause()  { s_state = DATALOG_PAUSED;    return true; }
 bool datalog_resume() { s_state = DATALOG_RECORDING; return true; }
 bool datalog_set_interval(uint32_t ms) {
-    if (ms < 100 || ms > 60000) return false;
+    if (ms < 10 || ms > 60000) return false;
     s_interval_ms = ms;
     return true;
 }

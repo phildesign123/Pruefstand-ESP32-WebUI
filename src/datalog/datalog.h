@@ -30,7 +30,7 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex);
 bool datalog_mount_sd();
 
 // Aufzeichnung steuern
-bool datalog_start(uint32_t interval_ms = 0);
+bool datalog_start(uint32_t interval_ms = 0, const char *filename = nullptr);
 bool datalog_stop();
 bool datalog_pause();
 bool datalog_resume();

@@ -24,6 +24,8 @@ float hotend_get_temperature() {
 float hotend_get_target()  { return 0.0f; }
 float hotend_get_duty()    { return 0.0f; }
 bool  hotend_has_fault()   { return false; }
+bool  sensor_has_fault()   { return false; }
+uint8_t sensor_get_fault_code() { return 0; }
 
 // ── Wägezellen-Mock ───────────────────────────────────────────
 // Sinus-Gewicht: 0–500 g mit 10-s-Periode
