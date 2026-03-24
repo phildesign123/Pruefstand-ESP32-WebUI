@@ -44,6 +44,7 @@ static SemaphoreHandle_t s_spi_mutex    = nullptr;
 static volatile DatalogState s_state    = DATALOG_IDLE;
 static volatile uint32_t s_interval_ms  = DATALOG_INTERVAL_MS;
 static char              s_filename[64] = {};
+static char              s_preamble[512] = {};
 static uint32_t          s_start_ms     = 0;
 static Preferences       s_prefs;
 static volatile uint32_t s_sample_seq   = 0;
@@ -56,16 +57,18 @@ static QueueHandle_t     s_sample_queue = nullptr;
 
 static void make_filename(char *buf, size_t len) {
     struct tm ti;
+    // Persistenten Zähler hochzählen
+    s_prefs.begin("datalog", false);
+    uint32_t cnt = s_prefs.getUInt("file_cnt", 0) + 1;
+    s_prefs.putUInt("file_cnt", cnt);
+    s_prefs.end();
+
     if (getLocalTime(&ti)) {
-        snprintf(buf, len, "/log_%04d%02d%02d_%02d%02d%02d.csv",
-                 ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday,
-                 ti.tm_hour, ti.tm_min, ti.tm_sec);
+        snprintf(buf, len, "/messdaten_%02d-%02d-%04d_%02d-%02d-%02d_%03lu.csv",
+                 ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900,
+                 ti.tm_hour, ti.tm_min, ti.tm_sec, (unsigned long)cnt);
     } else {
-        s_prefs.begin("datalog", false);
-        uint32_t cnt = s_prefs.getUInt("boot_cnt", 0) + 1;
-        s_prefs.putUInt("boot_cnt", cnt);
-        s_prefs.end();
-        snprintf(buf, len, "/log_BOOT_%05lu.csv", (unsigned long)cnt);
+        snprintf(buf, len, "/messdaten_BOOT_%03lu.csv", (unsigned long)cnt);
     }
 }
 
@@ -192,12 +195,15 @@ static void writer_task(void *arg) {
             s_log_file = SD.open(s_filename, FILE_APPEND);
             if (s_log_file) {
                 uint32_t t0 = micros();
-                s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
                 s_log_file.flush();
                 s_log_file.close();
                 last_sd_write_us = micros() - t0;
+                Serial.printf("[DATALOG] Flush: %u/%u bytes, %lu µs\n",
+                              (unsigned)written, (unsigned)s_buf_pos, (unsigned long)last_sd_write_us);
                 s_buf_pos = 0;
             } else {
+                Serial.printf("[DATALOG] FEHLER: Kann %s nicht öffnen (APPEND)!\n", s_filename);
                 s_state = DATALOG_ERROR;
             }
 
@@ -248,6 +254,11 @@ bool datalog_mount_sd() {
     return sd_mount();
 }
 
+void datalog_set_preamble(const char *text) {
+    if (text) snprintf(s_preamble, sizeof(s_preamble), "%s", text);
+    else s_preamble[0] = '\0';
+}
+
 bool datalog_start(uint32_t interval_ms, const char *filename) {
     if (!sd_mounted) {
         Serial.println("[DATALOG] Keine SD-Karte. Bitte erst einstecken und mounten.");
@@ -283,22 +294,19 @@ bool datalog_start(uint32_t interval_ms, const char *filename) {
     if (s_log_file) { s_log_file.flush(); s_log_file.close(); }
     s_log_file = SD.open(s_filename, FILE_WRITE);
     if (!s_log_file) {
+        Serial.printf("[DATALOG] FEHLER: Kann %s nicht erstellen!\n", s_filename);
         if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
         return false;
     }
+    Serial.printf("[DATALOG] Datei erstellt: %s\n", s_filename);
+    // Sequenz-Preamble schreiben (falls vorhanden)
+    if (s_preamble[0]) {
+        s_log_file.print(s_preamble);
+        s_preamble[0] = '\0';
+    }
     s_log_file.println(CSV_HEADER);
     s_log_file.flush();
-
-    // SD-Karte aufwärmen: Dummy-Block erzwingt Cluster-Allokation vorab
-    size_t header_end = s_log_file.position();
-    {
-        char warmup[DATALOG_BUFFER_SIZE];
-        memset(warmup, ' ', sizeof(warmup));
-        warmup[sizeof(warmup) - 1] = '\n';
-        s_log_file.write((const uint8_t*)warmup, sizeof(warmup));
-        s_log_file.flush();
-    }
-    s_log_file.seek(header_end);
+    s_log_file.close();
 
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
 

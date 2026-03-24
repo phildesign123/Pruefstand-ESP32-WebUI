@@ -109,8 +109,13 @@ function updateDashboard(d) {
     `Motor: ${d.motor ? 'AN' : 'AUS'}`;
 
   // Sequencer
+  const prevState = seqState.state;
   seqState = { state: d.seq_state, active: d.seq, remain: d.seq_remain || 0 };
   updateSeqTable();
+  if (prevState && prevState !== 'idle' && d.seq_state === 'idle') {
+    // Verzögert refreshen: Datalog braucht ~2s zum Flushen nach Stop
+    setTimeout(refreshRec, 3000);
+  }
 
   // Chart-Daten
   chartData.ts.push(now);
@@ -334,7 +339,10 @@ async function seqDelete(i) {
 }
 
 async function seqStart() {
-  const r = await api('POST', '/api/sequence/start');
+  const body = {};
+  const fn = document.getElementById('seq-filename').value.trim();
+  if (fn) body.filename = fn;
+  const r = await api('POST', '/api/sequence/start', body);
   if (r && !r.ok) toast('Fehler: ' + (r.error || 'unbekannt'));
   else { toast('Messreihe gestartet.'); await loadSequences(); }
 }

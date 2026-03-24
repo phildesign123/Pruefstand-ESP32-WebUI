@@ -85,10 +85,6 @@ static void do_move(float speed_mm_s, float steps_total, MotorDir dir) {
 
     s_moving        = false;
     s_current_speed = 0.0f;
-
-    // Idle-Timeout: Motor nach MOTOR_IDLE_TIMEOUT_MS stromlos
-    vTaskDelay(pdMS_TO_TICKS(MOTOR_IDLE_TIMEOUT_MS));
-    if (!s_moving) digitalWrite(MOTOR_EN_PIN, HIGH);
 }
 
 // ── Motor-Manager-Task ────────────────────────────────────────
@@ -96,7 +92,12 @@ static void do_move(float speed_mm_s, float steps_total, MotorDir dir) {
 static void motor_task(void *arg) {
     MotorCmd cmd;
     for (;;) {
-        if (xQueueReceive(s_cmd_queue, &cmd, portMAX_DELAY) != pdTRUE) continue;
+        if (xQueueReceive(s_cmd_queue, &cmd, pdMS_TO_TICKS(MOTOR_IDLE_TIMEOUT_MS)) != pdTRUE) {
+            // Timeout: kein neuer Befehl → Motor stromlos
+            if (!s_moving) digitalWrite(MOTOR_EN_PIN, HIGH);
+            // Nächsten Befehl unbegrenzt abwarten
+            if (xQueueReceive(s_cmd_queue, &cmd, portMAX_DELAY) != pdTRUE) continue;
+        }
 
         switch (cmd.type) {
             case CMD_MOVE: {

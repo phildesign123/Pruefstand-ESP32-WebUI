@@ -16,6 +16,7 @@ static volatile int  s_active_idx    = -1;
 static volatile SeqState s_state     = SEQ_IDLE;
 static volatile bool s_stop_req      = false;
 static volatile float s_remaining_s  = 0.0f;
+static volatile bool s_move_queued   = false;  // Move bereits in Motor-Queue
 static portMUX_TYPE  s_mux           = portMUX_INITIALIZER_UNLOCKED;
 
 static void sequencer_task(void *arg) {
@@ -33,6 +34,7 @@ static void sequencer_task(void *arg) {
         if (idx < 0 || idx >= s_seq_count) {
             s_state     = SEQ_DONE;
             s_active_idx = -1;
+            vTaskDelay(pdMS_TO_TICKS(2000));  // 2s Nachlauf für Messdaten
             datalog_stop();
             hotend_set_target(0);
             Serial.println("[SEQ] Messreihe abgeschlossen.");
@@ -45,29 +47,36 @@ static void sequencer_task(void *arg) {
         // ── HEATING ─────────────────────────────────────────
         s_state = SEQ_HEATING;
         hotend_set_target(seq.temperature_c);
-        Serial.printf("[SEQ] Sequenz %d: Aufheizen auf %.1f °C...\n", idx + 1, seq.temperature_c);
 
-        unsigned long heat_start = millis();
-        unsigned long stable_since = 0;
+        // Aufheizen überspringen wenn Temperatur bereits im Zielbereich
+        float cur_temp = hotend_get_temperature();
+        if (fabsf(cur_temp - seq.temperature_c) <= SEQ_TEMP_TOLERANCE) {
+            Serial.printf("[SEQ] Sequenz %d: Temperatur %.1f °C bereits erreicht.\n", idx + 1, seq.temperature_c);
+        } else {
+            Serial.printf("[SEQ] Sequenz %d: Aufheizen auf %.1f °C...\n", idx + 1, seq.temperature_c);
 
-        while (!s_stop_req) {
-            float temp = hotend_get_temperature();
-            float diff = fabsf(temp - seq.temperature_c);
+            unsigned long heat_start = millis();
+            unsigned long stable_since = 0;
 
-            if (diff <= SEQ_TEMP_TOLERANCE) {
-                if (stable_since == 0) stable_since = millis();
-                if (millis() - stable_since >= SEQ_TEMP_STABLE_TIME_S * 1000UL) break;
-            } else {
-                stable_since = 0;
+            while (!s_stop_req) {
+                float temp = hotend_get_temperature();
+                float diff = fabsf(temp - seq.temperature_c);
+
+                if (diff <= SEQ_TEMP_TOLERANCE) {
+                    if (stable_since == 0) stable_since = millis();
+                    if (millis() - stable_since >= SEQ_TEMP_STABLE_TIME_S * 1000UL) break;
+                } else {
+                    stable_since = 0;
+                }
+
+                if (millis() - heat_start >= SEQ_HEATING_TIMEOUT_S * 1000UL) {
+                    Serial.printf("[SEQ] Aufheiz-Timeout bei Sequenz %d!\n", idx + 1);
+                    s_state     = SEQ_ERROR;
+                    s_stop_req  = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(500));
             }
-
-            if (millis() - heat_start >= SEQ_HEATING_TIMEOUT_S * 1000UL) {
-                Serial.printf("[SEQ] Aufheiz-Timeout bei Sequenz %d!\n", idx + 1);
-                s_state     = SEQ_ERROR;
-                s_stop_req  = true;
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(500));
         }
         if (s_stop_req) break;
 
@@ -77,7 +86,10 @@ static void sequencer_task(void *arg) {
                       idx + 1, seq.speed_mm_s, seq.duration_s);
 
         s_remaining_s = seq.duration_s;
-        motor_move(seq.speed_mm_s, seq.duration_s, MOTOR_DIR_FORWARD);
+        if (!s_move_queued) {
+            motor_move(seq.speed_mm_s, seq.duration_s, MOTOR_DIR_FORWARD);
+        }
+        s_move_queued = false;
 
         // Warten bis motor_task den Befehl übernommen hat (s_moving wird gesetzt)
         {
@@ -111,7 +123,18 @@ static void sequencer_task(void *arg) {
         portENTER_CRITICAL(&s_mux);
         s_active_idx = idx + 1;
         portEXIT_CRITICAL(&s_mux);
-        vTaskDelay(pdMS_TO_TICKS(200));
+
+        // Nächste Sequenz: Move sofort in Queue schieben wenn gleiche Temp
+        int next = idx + 1;
+        if (next < s_seq_count) {
+            float next_temp = s_sequences[next].temperature_c;
+            float cur = hotend_get_temperature();
+            if (fabsf(cur - next_temp) <= SEQ_TEMP_TOLERANCE) {
+                // Gleiche Temperatur → Move vorab in Queue, minimiert Pause
+                motor_move(s_sequences[next].speed_mm_s, s_sequences[next].duration_s, MOTOR_DIR_FORWARD);
+                s_move_queued = true;
+            }
+        }
     }
 
     // Aufräumen bei Stop
@@ -160,12 +183,28 @@ bool sequencer_get(int i, Sequence *s) {
     *s = s_sequences[i]; return true;
 }
 
-bool sequencer_start() {
+bool sequencer_start(const char *filename) {
     if (s_state != SEQ_IDLE || s_seq_count == 0) return false;
-    s_stop_req   = false;
-    s_active_idx = 0;
-    s_state      = SEQ_HEATING;
-    datalog_start(SEQ_LOG_INTERVAL_MS);
+    s_stop_req    = false;
+    s_move_queued = false;
+    s_active_idx  = 0;
+    s_state       = SEQ_HEATING;
+
+    // Sequenz-Tabelle als Preamble in CSV schreiben
+    char preamble[512];
+    int pos = 0;
+    pos += snprintf(preamble + pos, sizeof(preamble) - pos,
+                    "# Messreihen\n# Nr,Temp_C,Speed_mm_s,Dauer_s\n");
+    for (int i = 0; i < s_seq_count && pos < (int)sizeof(preamble) - 40; i++) {
+        pos += snprintf(preamble + pos, sizeof(preamble) - pos,
+                        "# %d,%.1f,%.2f,%.1f\n",
+                        i + 1, s_sequences[i].temperature_c,
+                        s_sequences[i].speed_mm_s, s_sequences[i].duration_s);
+    }
+    pos += snprintf(preamble + pos, sizeof(preamble) - pos, "#\n");
+    datalog_set_preamble(preamble);
+
+    datalog_start(SEQ_LOG_INTERVAL_MS, filename);
     return true;
 }
 

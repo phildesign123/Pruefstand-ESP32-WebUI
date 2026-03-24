@@ -28,7 +28,7 @@ int  sequencer_count();
 bool sequencer_get(int index, Sequence *s);
 
 // Steuerung
-bool sequencer_start();
+bool sequencer_start(const char *filename = nullptr);
 void sequencer_stop();
 
 // Status

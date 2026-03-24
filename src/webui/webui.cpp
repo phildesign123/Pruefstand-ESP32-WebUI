@@ -360,8 +360,9 @@ static void api_seq_add(AsyncWebServerRequest *req, JsonVariant &body) {
     req->send(200, "application/json", "{\"ok\":true}");
 }
 
-static void api_seq_start(AsyncWebServerRequest *req) {
-    if (!sequencer_start())
+static void api_seq_start(AsyncWebServerRequest *req, JsonVariant &body) {
+    const char *fn = body["filename"] | (const char*)nullptr;
+    if (!sequencer_start(fn))
         req->send(400, "application/json", "{\"error\":\"cannot start\"}");
     else
         req->send(200, "application/json", "{\"ok\":true}");
@@ -559,7 +560,8 @@ static void register_routes() {
 
     // Sequencer
     s_server.on("/api/sequence",       HTTP_GET,  api_seq_get);
-    s_server.on("/api/sequence/start", HTTP_POST, [](AsyncWebServerRequest *r){ api_seq_start(r); });
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/start",
+        [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_start(r, b); }));
     s_server.on("/api/sequence/stop",  HTTP_POST, [](AsyncWebServerRequest *r){ api_seq_stop(r); });
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/add",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_add(r, b); }));
