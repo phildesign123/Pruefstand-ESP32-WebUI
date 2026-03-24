@@ -27,6 +27,9 @@ bool motor_set_microstep(uint8_t microstep);
 bool motor_set_stealthchop(bool enable);
 bool motor_set_interpolation(bool enable);
 bool motor_get_tmc_status(TMC2208Status *status);
+bool motor_get_tmc_config(TMC2208Config *cfg);
+bool motor_get_dir_invert();
+void motor_set_dir_invert(bool invert);
 
 // ── E-Steps Kalibrierung ─────────────────────────────────────
 bool  motor_calibrate_start(float distance_mm, float speed_mm_s);

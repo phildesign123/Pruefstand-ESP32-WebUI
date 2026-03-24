@@ -40,6 +40,7 @@ static volatile float   s_current_speed  = 0.0f;
 static volatile bool    s_moving         = false;
 static float            s_esteps         = MOTOR_E_STEPS_PER_MM;
 static bool             s_esteps_valid   = false;
+static bool             s_dir_invert     = false;
 static float            s_cal_commanded  = 0.0f;   // Phase 1: gespeicherte Sollstrecke
 
 static Preferences      s_prefs;
@@ -50,6 +51,7 @@ static void nvs_load() {
     s_prefs.begin("motor", true);
     s_esteps_valid = (s_prefs.getUChar("esteps_ok", 0) == 1);
     s_esteps       = s_prefs.getFloat("esteps", MOTOR_E_STEPS_PER_MM);
+    s_dir_invert   = (s_prefs.getUChar("dir_inv", 0) == 1);
     s_prefs.end();
     Serial.printf("[MOTOR] E-Steps: %.2f Steps/mm (%s)\n",
                   s_esteps, s_esteps_valid ? "kalibriert" : "DEFAULT");
@@ -70,7 +72,8 @@ static void do_move(float speed_mm_s, float steps_total, MotorDir dir) {
     if (freq_hz > 50000) freq_hz = 50000;
 
     // DIR setzen und Setup-Zeit abwarten
-    digitalWrite(MOTOR_DIR_PIN, dir == MOTOR_DIR_FORWARD ? HIGH : LOW);
+    bool fwd = (dir == MOTOR_DIR_FORWARD) ^ s_dir_invert;
+    digitalWrite(MOTOR_DIR_PIN, fwd ? HIGH : LOW);
     ets_delay_us(20);
 
     // EN LOW (Motor aktiv)
@@ -262,6 +265,19 @@ bool motor_set_interpolation(bool enable) {
 
 bool motor_get_tmc_status(TMC2208Status *status) {
     return tmc2208_read_status(status);
+}
+
+bool motor_get_tmc_config(TMC2208Config *cfg) {
+    return tmc2208_read_config(cfg);
+}
+
+bool motor_get_dir_invert() { return s_dir_invert; }
+
+void motor_set_dir_invert(bool invert) {
+    s_dir_invert = invert;
+    s_prefs.begin("motor", false);
+    s_prefs.putUChar("dir_inv", invert ? 1 : 0);
+    s_prefs.end();
 }
 
 bool motor_calibrate_start(float distance_mm, float speed_mm_s) {

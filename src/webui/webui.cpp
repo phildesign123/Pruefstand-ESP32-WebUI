@@ -230,6 +230,34 @@ static void api_motor_set_interpolation(AsyncWebServerRequest *req, JsonVariant 
     req->send(200, "application/json", "{\"ok\":true}");
 }
 
+static void api_motor_get_config(AsyncWebServerRequest *req) {
+    TMC2208Config cfg;
+    if (!motor_get_tmc_config(&cfg)) {
+        req->send(500, "application/json", "{\"error\":\"read failed\"}");
+        return;
+    }
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+        "{\"run_ma\":%u,\"hold_ma\":%u,\"microsteps\":%u,"
+        "\"stealthchop\":%s,\"interpolation\":%s,\"dir_invert\":%s}",
+        cfg.run_current_ma, cfg.hold_current_ma, cfg.microsteps,
+        cfg.stealthchop ? "true" : "false",
+        cfg.interpolation ? "true" : "false",
+        motor_get_dir_invert() ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+static void api_motor_get_dir(AsyncWebServerRequest *req) {
+    char buf[40];
+    snprintf(buf, sizeof(buf), "{\"invert\":%s}", motor_get_dir_invert() ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
+static void api_motor_set_dir(AsyncWebServerRequest *req, JsonVariant &body) {
+    motor_set_dir_invert(body["invert"] | false);
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
 static void api_motor_get_esteps(AsyncWebServerRequest *req) {
     char buf[80];
     snprintf(buf, sizeof(buf), "{\"steps_per_mm\":%.2f,\"valid\":%s}",
@@ -520,6 +548,7 @@ static void register_routes() {
 
     // Motor
     s_server.on("/api/motor/status", HTTP_GET, api_motor_status);
+    s_server.on("/api/motor/config", HTTP_GET, api_motor_get_config);
     s_server.on("/api/motor/stop",   HTTP_POST, [](AsyncWebServerRequest *r){ api_motor_stop(r); });
     s_server.on("/api/motor/esteps", HTTP_GET, api_motor_get_esteps);
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/move",
@@ -534,6 +563,13 @@ static void register_routes() {
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_stealthchop(r, b); }));
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/interpolation",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_interpolation(r, b); }));
+    s_server.on("/api/motor/dir", HTTP_GET, api_motor_get_dir);
+    {
+        auto *h = new AsyncCallbackJsonWebHandler("/api/motor/dir",
+            [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_dir(r, b); });
+        h->setMethod(HTTP_POST);
+        s_server.addHandler(h);
+    }
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/esteps",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_motor_set_esteps(r, b); }));
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/motor/cal/start",

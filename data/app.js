@@ -378,6 +378,17 @@ async function refreshSettings() {
     b.className = 'badge ' + (es.valid ? 'ok' : 'warn');
   }
 
+  // TMC2208 Konfiguration
+  const mc = await api('GET', '/api/motor/config');
+  if (mc) {
+    document.getElementById('m-run-ma').value = mc.run_ma;
+    document.getElementById('m-hold-ma').value = mc.hold_ma;
+    document.getElementById('m-microstep').value = mc.microsteps;
+    document.getElementById('m-stealthchop').value = mc.stealthchop ? '1' : '0';
+    document.getElementById('m-intpol').value = mc.interpolation ? '1' : '0';
+    document.getElementById('m-dir').value = mc.dir_invert ? '1' : '0';
+  }
+
   // SD-Info – automatisch mounten falls nötig
   let sd = await api('GET', '/api/datalog/sdinfo');
   if (sd && !sd.mounted) {
@@ -477,6 +488,12 @@ async function setInterpolation() {
   const v = document.getElementById('m-intpol').value === '1';
   await api('POST', '/api/motor/interpolation', { enable: v });
   toast('Interpolation ' + (v ? 'AN' : 'AUS') + '.');
+}
+
+async function setMotorDir() {
+  const v = document.getElementById('m-dir').value === '1';
+  await api('POST', '/api/motor/dir', { invert: v });
+  toast('Richtung: ' + (v ? 'Invertiert' : 'Normal') + '.');
 }
 
 async function datalogStart() {

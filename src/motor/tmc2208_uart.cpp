@@ -87,6 +87,18 @@ bool tmc2208_set_interpolation(bool enable) {
     return true;
 }
 
+bool tmc2208_read_config(TMC2208Config *cfg) {
+    if (!s_driver) return false;
+    if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
+    cfg->run_current_ma  = s_driver->rms_current();
+    cfg->hold_current_ma = (uint16_t)(s_driver->rms_current() * s_driver->hold_multiplier());
+    cfg->microsteps      = s_driver->microsteps();
+    cfg->stealthchop     = !s_driver->en_spreadCycle();
+    cfg->interpolation   = s_driver->intpol();
+    if (s_mutex) xSemaphoreGive(s_mutex);
+    return true;
+}
+
 bool tmc2208_read_status(TMC2208Status *status) {
     if (!s_driver) return false;
     if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
