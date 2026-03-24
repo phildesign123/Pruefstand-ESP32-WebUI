@@ -34,7 +34,7 @@ struct SampleData {
 // ── CSV-Header ───────────────────────────────────────────────
 
 static const char CSV_HEADER[] =
-    "sample_seq,millis_ms,gewicht,temperatur,motor_geschwindigkeit,"
+    "sample_seq,millis_ms,kraft_N,temperatur,motor_geschwindigkeit,"
     "error_flags,sd_write_us,loop_duration_us";
 
 // ── Status-Variablen ─────────────────────────────────────────
@@ -74,9 +74,10 @@ static void make_filename(char *buf, size_t len) {
 static volatile bool sd_mounted = false;
 
 static bool sd_mount() {
+    if (sd_mounted) return true;
     Serial.println("[DATALOG] SD-Karte wird gesucht...");
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
-    bool ok = SD.begin(SD_CS, *s_spi, 4000000);
+    bool ok = SD.begin(SD_CS, *s_spi, 1000000);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     sd_mounted = ok;
     if (!ok) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
@@ -99,7 +100,7 @@ static void sampler_task(void *arg) {
         uint32_t loop_start = micros();
 
         // Sensoren lesen (alles gecachte Werte, ~5 µs)
-        float gewicht = load_cell_get_weight_g();
+        float gewicht = load_cell_get_weight_g() * 0.00981f;  // Gramm → Newton
         float temp    = hotend_get_temperature();
         float speed   = motor_get_current_speed();
 
@@ -188,13 +189,12 @@ static void writer_task(void *arg) {
         if (need_flush && sd_mounted) {
             if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
 
-            if (!s_log_file) {
-                s_log_file = SD.open(s_filename, FILE_APPEND);
-            }
+            s_log_file = SD.open(s_filename, FILE_APPEND);
             if (s_log_file) {
                 uint32_t t0 = micros();
                 s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
                 s_log_file.flush();
+                s_log_file.close();
                 last_sd_write_us = micros() - t0;
                 s_buf_pos = 0;
             } else {
@@ -208,12 +208,11 @@ static void writer_task(void *arg) {
         // Datei-Rotation prüfen
         if (bytes_since_rot >= (size_t)DATALOG_MAX_FILE_SIZE_MB * 1024 * 1024) {
             if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-            if (s_log_file) { s_log_file.flush(); s_log_file.close(); }
             char new_name[72];
             make_filename(new_name, sizeof(new_name));
             strncpy(s_filename, new_name, sizeof(s_filename));
             s_log_file = SD.open(s_filename, FILE_WRITE);
-            if (s_log_file) s_log_file.println(CSV_HEADER);
+            if (s_log_file) { s_log_file.println(CSV_HEADER); s_log_file.close(); }
             if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
             bytes_since_rot = 0;
         }
@@ -228,9 +227,8 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
 
     s_sample_queue = xQueueCreate(SAMPLE_QUEUE_LEN, sizeof(SampleData));
 
-    // SD-Karte im Hintergrund mounten (auf Core 0, wo auch der Writer läuft)
-    xTaskCreatePinnedToCore([](void*){ sd_mount(); vTaskDelete(nullptr); },
-                            "sd_mnt", 4096, nullptr, 1, nullptr, CORE_WIFI);
+    // SD-Karte synchron mounten (verhindert Race-Conditions mit WebUI)
+    sd_mount();
 
     // Sampler: Core 1 (Realtime), hohe Priorität
     xTaskCreatePinnedToCore(sampler_task, "datalog_s", TASK_STACK_DATALOG_S,

@@ -360,6 +360,8 @@ tr.active-seq td {
   box-shadow: inset 3px 0 0 var(--success);
 }
 .seq-status { font-size: 16px; }
+tfoot td { padding: 0; }
+tfoot td input { padding-left: 8px; }
 
 /* ═══════ Badges ═══════ */
 .badge {
@@ -424,6 +426,26 @@ tr.active-seq td {
 @keyframes blink-blue {
   0%,100% { opacity: 1; }
   50% { opacity: 0; }
+}
+@keyframes pulse-red {
+  0%,100% { box-shadow: 0 0 0 0 rgba(244,67,54,0.6); }
+  50% { box-shadow: 0 0 0 5px rgba(244,67,54,0); }
+}
+@keyframes pulse-green {
+  0%,100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.6); }
+  50% { box-shadow: 0 0 0 5px rgba(76,175,80,0); }
+}
+.rec-dot {
+  display: inline-block; width: 10px; height: 10px;
+  background: #f44336; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle;
+  animation: pulse-red 1.5s ease-in-out infinite;
+}
+.active-dot {
+  display: inline-block; width: 10px; height: 10px;
+  background: #4caf50; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle;
+  animation: pulse-green 1.5s ease-in-out infinite;
 }
 .recording { animation: recording-pulse 2s var(--ease) infinite; }
 

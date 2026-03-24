@@ -100,9 +100,9 @@ function updateDashboard(d) {
     faultBox.style.display = 'none';
   }
 
-  // Gewicht
+  // Kraft (Newton)
   document.getElementById('weight-val').innerHTML =
-    `${d.weight.toFixed(2)}<span class="unit"> g</span>`;
+    `${d.weight.toFixed(3)}<span class="unit"> N</span>`;
   document.getElementById('motor-speed-val').innerHTML =
     `${d.speed.toFixed(2)}<span class="unit"> mm/s</span>`;
   document.getElementById('motor-status').textContent =
@@ -132,7 +132,7 @@ function updateDashboard(d) {
 
   // Settings-Seite live-Update
   if (document.getElementById('s-weight')) {
-    document.getElementById('s-weight').textContent = d.weight.toFixed(2);
+    document.getElementById('s-weight').textContent = d.weight.toFixed(3);
   }
 }
 
@@ -158,7 +158,7 @@ function drawChart() {
   const ctx  = chartCanvas.getContext('2d');
   const W    = chartCanvas.width;
   const H    = chartCanvas.height;
-  const pad  = { l: 50, r: 60, t: 10, b: 25 };
+  const pad  = { l: 50, r: 85, t: 10, b: 25 };
   const n    = chartData.ts.length;
 
   ctx.clearRect(0, 0, W, H);
@@ -173,19 +173,21 @@ function drawChart() {
 
   // Feste Skalen
   const tempMin = 0, tempMax = 280;
-  const speedMin = 0, speedMax = 10;
-  // Gewicht: automatisch skaliert
-  const weightMax = Math.max(1, ...chartData.weight) * 1.1;
+  const speedMin = 0, speedMax = Math.max(1, Math.ceil(Math.max(...chartData.speed)));
+  // Kraft (N): auf nächsten ganzen Newton aufrunden, min 1 N
+  const weightMax = Math.max(1, Math.ceil(Math.max(...chartData.weight)));
 
   function tx(t) { return pad.l + (t - tMin) / (tMax - tMin) * (W - pad.l - pad.r); }
   function tyL(v, mn, mx) { return pad.t + (1 - (v - mn) / (mx - mn)) * (H - pad.t - pad.b); }
 
-  // Grid
+  // Grid – gemeinsame Linien für alle rechten Achsen
+  const gridSteps = Math.max(weightMax, speedMax);
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + i * (H - pad.t - pad.b) / 4;
+  for (let i = 0; i <= gridSteps; i++) {
+    const f = i / gridSteps;
+    const y = pad.t + (1 - f) * (H - pad.t - pad.b);
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
   }
 
@@ -209,29 +211,34 @@ function drawChart() {
   if (showTemp) {
     ctx.fillStyle = '#ef4444';
     ctx.textAlign = 'right';
-    [0, 70, 140, 210, 280].forEach(v => {
+    for (let v = 0; v <= tempMax; v += 50) {
       const y = tyL(v, tempMin, tempMax);
       ctx.fillText(v + '°C', pad.l - 3, y + 3);
-    });
+    }
   }
-  // Rechte Achse(n)
+  // Rechte Achse(n) – nebeneinander
   ctx.textAlign = 'left';
   const rx = W - pad.r + 3;
   if (showWeight) {
     ctx.fillStyle = '#10b981';
-    [0, 0.25, 0.5, 0.75, 1].forEach(f => {
-      const v = f * weightMax;
-      const y = pad.t + (1 - f) * (H - pad.t - pad.b);
-      ctx.fillText(v.toFixed(0) + 'g', rx, y + 3);
-    });
+    for (let i = 0; i <= gridSteps; i++) {
+      const nv = (i / gridSteps) * weightMax;
+      if (Math.abs(nv - Math.round(nv)) < 0.01) {
+        const y = pad.t + (1 - i / gridSteps) * (H - pad.t - pad.b);
+        ctx.fillText(Math.round(nv) + 'N', rx, y + 3);
+      }
+    }
   }
   if (showSpeed) {
     ctx.fillStyle = '#f59e0b';
-    const off = showWeight ? 10 : 0;
-    [0, 2.5, 5, 7.5, 10].forEach(v => {
-      const y = tyL(v, speedMin, speedMax);
-      ctx.fillText(v.toFixed(1), rx, y + 3 + off);
-    });
+    const rx2 = rx + (showWeight ? 30 : 0);
+    for (let i = 0; i <= gridSteps; i++) {
+      const sv = (i / gridSteps) * speedMax;
+      if (Math.abs(sv - Math.round(sv)) < 0.01) {
+        const y = pad.t + (1 - i / gridSteps) * (H - pad.t - pad.b);
+        ctx.fillText(Math.round(sv), rx2, y + 3);
+      }
+    }
   }
 
   // Zeitachse
@@ -293,11 +300,11 @@ async function loadSequences() {
 function updateSeqTable() {
   const tbody = document.getElementById('seq-table');
   if (!tbody) return;
-  const statusIcons = { idle:'·', heating:'⏳', running:'►', done:'✓', error:'✗', next:'»' };
+  const statusIcons = { idle:'·', heating:'⏳', running:'<span class="active-dot"></span>', done:'✓', error:'✗', next:'»' };
 
   tbody.innerHTML = sequences.map((s, i) => {
     const isActive = i === seqState.active;
-    const icon = isActive ? statusIcons[seqState.state] || '►' : '·';
+    const icon = isActive ? statusIcons[seqState.state] || '·' : '·';
     const cls  = isActive ? 'active-seq' : '';
     const remain = (isActive && seqState.state === 'running' && seqState.remain > 0)
       ? `${seqState.remain.toFixed(1)} / ${s.duration_s}` : `${s.duration_s}`;
@@ -363,8 +370,12 @@ async function refreshSettings() {
     b.className = 'badge ' + (es.valid ? 'ok' : 'warn');
   }
 
-  // SD-Info
-  const sd = await api('GET', '/api/datalog/sdinfo');
+  // SD-Info – automatisch mounten falls nötig
+  let sd = await api('GET', '/api/datalog/sdinfo');
+  if (sd && !sd.mounted) {
+    const m = await api('POST', '/api/datalog/mount');
+    if (m && m.ok) sd = await api('GET', '/api/datalog/sdinfo');
+  }
   if (sd && sd.mounted) {
     document.getElementById('sd-free').textContent  = formatBytes(sd.free);
     document.getElementById('sd-total').textContent = formatBytes(sd.total);
@@ -380,8 +391,13 @@ async function refreshSettings() {
   const ls = await api('GET', '/api/datalog/status');
   if (ls) {
     const b = document.getElementById('log-state');
-    b.textContent = ls.state;
-    b.className = 'badge ' + (ls.state === 'recording' ? 'ok' : 'secondary');
+    if (ls.state === 'recording') {
+      b.innerHTML = '<span class="rec-dot"></span>recording';
+      b.className = 'badge ok';
+    } else {
+      b.textContent = ls.state;
+      b.className = 'badge secondary';
+    }
   }
 }
 
@@ -389,9 +405,10 @@ async function refreshFiles() {
   const d = await api('GET', '/api/datalog/filelist');
   if (!d) return;
   const list = document.getElementById('file-list');
-  list.innerHTML = d.files.map(f => `
+  list.innerHTML = d.files.reverse().map(f => `
     <div class="file-row">
-      <span class="file-name">${f.name} ${f.active ? '● ' : ''}</span>
+      ${f.active ? '<span class="active-dot"></span>' : '<span style="width:10px;display:inline-block"></span>'}
+      <span class="file-name">${f.name}</span>
       <span class="file-size">${formatBytes(f.size)}</span>
       <a href="/api/datalog/files/${f.name}" download>
         <button>⬇</button></a>
@@ -503,8 +520,12 @@ async function recStop() {
 }
 
 async function refreshRec() {
-  // SD-Info
-  const sd = await api('GET', '/api/datalog/sdinfo');
+  // SD-Info – automatisch mounten falls nötig
+  let sd = await api('GET', '/api/datalog/sdinfo');
+  if (sd && !sd.mounted) {
+    const m = await api('POST', '/api/datalog/mount');
+    if (m && m.ok) sd = await api('GET', '/api/datalog/sdinfo');
+  }
   if (sd && sd.mounted) {
     document.getElementById('rec-sd-free').textContent  = formatBytes(sd.free);
     document.getElementById('rec-sd-total').textContent = formatBytes(sd.total);
@@ -516,16 +537,22 @@ async function refreshRec() {
   const ls = await api('GET', '/api/datalog/status');
   if (ls) {
     const b = document.getElementById('rec-state');
-    b.textContent = ls.state;
-    b.className = 'badge ' + (ls.state === 'recording' ? 'ok' : 'secondary');
+    if (ls.state === 'recording') {
+      b.innerHTML = '<span class="rec-dot"></span>recording';
+      b.className = 'badge ok';
+    } else {
+      b.textContent = ls.state;
+      b.className = 'badge secondary';
+    }
   }
   // Dateiliste
   const d = await api('GET', '/api/datalog/filelist');
   if (!d) return;
   const list = document.getElementById('rec-file-list');
-  list.innerHTML = d.files.map(f => `
+  list.innerHTML = d.files.reverse().map(f => `
     <div class="file-row">
-      <span class="file-name">${f.name} ${f.active ? '● ' : ''}</span>
+      ${f.active ? '<span class="active-dot"></span>' : '<span style="width:10px;display:inline-block"></span>'}
+      <span class="file-name">${f.name}</span>
       <span class="file-size">${formatBytes(f.size)}</span>
       <a href="/api/datalog/files/${f.name}" download>
         <button>⬇</button></a>
@@ -636,4 +663,5 @@ window.addEventListener('DOMContentLoaded', () => {
   initChart();
   wsConnect();
   loadSequences();
+  refreshRec();
 });

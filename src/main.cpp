@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_sntp.h"
+#include <ESPmDNS.h>
 
 #include "config.h"
 #include <WiFi.h>
@@ -83,6 +84,12 @@ void setup() {
     // ── SNTP für Zeitstempel (läuft nach WiFi-Verbindung) ────
     sntp_set_time_sync_notification_cb(sntp_init_callback);
     configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
+
+    // mDNS: pruefstand.local
+    if (MDNS.begin("pruefstand")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[MAIN] mDNS: http://pruefstand.local");
+    }
 
     Serial.printf("[MAIN] Bereit. Free Heap: %lu Bytes\n",
                   (unsigned long)ESP.getFreeHeap());
@@ -165,9 +172,9 @@ void loop() {
 
     // ── Status ────────────────────────────────────────────────
     } else if (cmd.equalsIgnoreCase("status")) {
-        Serial.printf("T: %.1f / %.1f °C  |  W: %.2f g  |  Speed: %.2f mm/s  |  Motor: %s\n",
+        Serial.printf("T: %.1f / %.1f °C  |  F: %.4f N  |  Speed: %.2f mm/s  |  Motor: %s\n",
                       hotend_get_temperature(), hotend_get_target(),
-                      load_cell_get_weight_g(), motor_get_current_speed(),
+                      load_cell_get_weight_g() * 0.00981f, motor_get_current_speed(),
                       motor_is_moving() ? "AN" : "AUS");
         Serial.printf("Heap: %lu B  |  Uptime: %lus\n",
                       (unsigned long)ESP.getFreeHeap(),

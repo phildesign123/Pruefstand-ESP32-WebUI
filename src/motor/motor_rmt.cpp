@@ -50,30 +50,49 @@ static void rmt_step_task(void *arg) {
 
         int32_t remaining = s_steps_total;
 
-        while (remaining > 0 && !s_stop_req) {
-            int32_t block = (remaining > RMT_BLOCK_SIZE) ? RMT_BLOCK_SIZE : remaining;
+        // Langsame Frequenzen (< 31 Hz, period > 32000 µs):
+        // RMT-Duration ist 15 Bit (max 32767), daher Einzelschritte mit Delay
+        if (s_period_us > 32000) {
+            uint32_t delay_ms = s_period_us / 1000;
+            if (delay_ms < 1) delay_ms = 1;
+            rmt_item32_t single;
+            single.level0    = 1;
+            single.duration0 = 2;
+            single.level1    = 0;
+            single.duration1 = 2;
 
-            // Block befüllen: alle Items identisch
-            uint16_t high_us = 2;
-            uint16_t low_us  = (uint16_t)(s_period_us - high_us);
-            if (low_us < 2) low_us = 2;
-
-            for (int i = 0; i < block; i++) {
-                items[i].level0    = 1;
-                items[i].duration0 = high_us;
-                items[i].level1    = 0;
-                items[i].duration1 = low_us;
+            while (remaining > 0 && !s_stop_req) {
+                xSemaphoreTake(s_done_sem, 0);
+                rmt_write_items(RMT_CHANNEL, &single, 1, false);
+                xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(100));
+                remaining--;
+                s_steps_done++;
+                vTaskDelay(pdMS_TO_TICKS(delay_ms));
             }
+        } else {
+            // Schnelle Frequenzen: Blöcke von 64 Steps per RMT
+            while (remaining > 0 && !s_stop_req) {
+                int32_t block = (remaining > RMT_BLOCK_SIZE) ? RMT_BLOCK_SIZE : remaining;
 
-            // Transfer starten (nicht-blockierend)
-            xSemaphoreTake(s_done_sem, 0);  // alten Wert leeren
-            rmt_write_items(RMT_CHANNEL, items, block, false);
+                uint16_t high_us = 2;
+                uint16_t low_us  = (uint16_t)(s_period_us - high_us);
+                if (low_us < 2) low_us = 2;
 
-            // Warten bis Block gesendet
-            if (xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(1000)) == pdFALSE) break;
+                for (int i = 0; i < block; i++) {
+                    items[i].level0    = 1;
+                    items[i].duration0 = high_us;
+                    items[i].level1    = 0;
+                    items[i].duration1 = low_us;
+                }
 
-            remaining    -= block;
-            s_steps_done += block;
+                xSemaphoreTake(s_done_sem, 0);
+                rmt_write_items(RMT_CHANNEL, items, block, false);
+
+                if (xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(1000)) == pdFALSE) break;
+
+                remaining    -= block;
+                s_steps_done += block;
+            }
         }
 
         // Kanal leerlaufen lassen

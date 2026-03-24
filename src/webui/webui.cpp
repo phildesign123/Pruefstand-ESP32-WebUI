@@ -45,13 +45,13 @@ static void ws_push_task(void *arg) {
         char buf[256];
         snprintf(buf, sizeof(buf),
             "{\"t\":%lu,\"temp\":%.2f,\"temp_target\":%.2f,\"duty\":%.3f,"
-            "\"weight\":%.3f,\"speed\":%.2f,\"motor\":%d,"
+            "\"weight\":%.4f,\"speed\":%.2f,\"motor\":%d,"
             "\"seq\":%d,\"seq_state\":\"%s\",\"seq_remain\":%.1f}",
             (unsigned long)millis(),
             hotend_get_temperature(),
             hotend_get_target(),
             hotend_get_duty(),
-            load_cell_get_weight_g(),
+            load_cell_get_weight_g() * 0.00981f,
             motor_get_current_speed(),
             motor_is_moving() ? 1 : 0,
             sequencer_get_active_index(),
@@ -155,8 +155,8 @@ static void api_hotend_clear_fault(AsyncWebServerRequest *req) {
 static void api_loadcell_get(AsyncWebServerRequest *req) {
     char buf[128];
     snprintf(buf, sizeof(buf),
-             "{\"weight_g\":%.3f,\"raw\":%ld,\"calibrated\":%s}",
-             load_cell_get_weight_g(),
+             "{\"weight_N\":%.4f,\"raw\":%ld,\"calibrated\":%s}",
+             load_cell_get_weight_g() * 0.00981f,
              (long)load_cell_get_raw(),
              load_cell_is_calibrated() ? "true" : "false");
     req->send(200, "application/json", buf);
@@ -290,9 +290,9 @@ static void api_datalog_files(AsyncWebServerRequest *req) {
         o["date"]  = files[i].date_str;
         o["active"] = (strcmp(files[i].name, datalog_get_filename()) == 0);
     }
-    char buf[2048];
-    serializeJson(doc, buf);
-    req->send(200, "application/json", buf);
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
 }
 
 static void api_datalog_download(AsyncWebServerRequest *req) {
