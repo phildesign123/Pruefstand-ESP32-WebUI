@@ -50,13 +50,38 @@ static void nvs_save() {
 
 // ── Sampling-Task ─────────────────────────────────────────────
 
+static uint32_t s_i2c_errors = 0;
+
+static void i2c_bus_recovery() {
+    // I2C-Bus Recovery: Takte generieren um hängenden Slave zu lösen
+    if (s_i2c_mutex) xSemaphoreTake(s_i2c_mutex, portMAX_DELAY);
+    s_wire->end();
+    pinMode(NAU7802_SCL, OUTPUT);
+    for (int i = 0; i < 16; i++) {
+        digitalWrite(NAU7802_SCL, HIGH); delayMicroseconds(5);
+        digitalWrite(NAU7802_SCL, LOW);  delayMicroseconds(5);
+    }
+    digitalWrite(NAU7802_SCL, HIGH);
+    s_wire->begin(NAU7802_SDA, NAU7802_SCL, NAU7802_I2C_FREQ);
+    if (s_i2c_mutex) xSemaphoreGive(s_i2c_mutex);
+    Serial.println("[LOADCELL] I2C Bus-Recovery durchgeführt.");
+}
+
 static void load_cell_task(void *arg) {
     for (;;) {
         // Polling: DRDY-Register oder GPIO prüfen (80 SPS = 12.5 ms)
         if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) {
             vTaskDelay(pdMS_TO_TICKS(2));
+            s_i2c_errors++;
+            // Nach 500 fehlgeschlagenen Versuchen (~1s): Bus-Recovery
+            if (s_i2c_errors >= 500) {
+                i2c_bus_recovery();
+                nau7802_init(*s_wire, s_i2c_mutex);
+                s_i2c_errors = 0;
+            }
             continue;
         }
+        s_i2c_errors = 0;
 
         int32_t raw = nau7802_read_raw(*s_wire, s_i2c_mutex);
 

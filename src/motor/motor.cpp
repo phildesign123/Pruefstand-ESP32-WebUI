@@ -52,9 +52,29 @@ static void nvs_load() {
     s_esteps_valid = (s_prefs.getUChar("esteps_ok", 0) == 1);
     s_esteps       = s_prefs.getFloat("esteps", MOTOR_E_STEPS_PER_MM);
     s_dir_invert   = (s_prefs.getUChar("dir_inv", 0) == 1);
+
+    // TMC2208 Einstellungen aus NVS wiederherstellen
+    uint16_t run_ma  = s_prefs.getUShort("tmc_run",  0);
+    uint16_t hold_ma = s_prefs.getUShort("tmc_hold", 0);
+    uint16_t ms      = s_prefs.getUShort("tmc_ms",   0);
+    uint8_t  sc      = s_prefs.getUChar("tmc_sc",   0xFF);
+    uint8_t  intpol  = s_prefs.getUChar("tmc_intpol", 0xFF);
     s_prefs.end();
+
+    if (run_ma > 0)    tmc2208_set_current(run_ma, hold_ma);
+    if (ms > 0)        tmc2208_set_microstep((uint8_t)ms);
+    if (sc != 0xFF)    tmc2208_set_stealthchop(sc == 1);
+    if (intpol != 0xFF) tmc2208_set_interpolation(intpol == 1);
     Serial.printf("[MOTOR] E-Steps: %.2f Steps/mm (%s)\n",
                   s_esteps, s_esteps_valid ? "kalibriert" : "DEFAULT");
+}
+
+static void nvs_save_tmc_val(const char *key_u16, uint16_t val16,
+                              const char *key_u8, uint8_t val8) {
+    s_prefs.begin("motor", false);
+    if (key_u16) s_prefs.putUShort(key_u16, val16);
+    if (key_u8)  s_prefs.putUChar(key_u8, val8);
+    s_prefs.end();
 }
 
 static void nvs_save_esteps(float val) {
@@ -189,13 +209,14 @@ bool motor_init(SemaphoreHandle_t uart_mutex) {
     if (!tmc2208_init(MOTOR_UART_TX, MOTOR_UART_RX, uart_mx)) {
         Serial.println("[MOTOR] TMC2208 nicht erreichbar – weiter ohne UART.");
     } else {
+        // Standardwerte setzen
         tmc2208_set_current(MOTOR_CURRENT_MA, MOTOR_HOLD_CURRENT_MA);
         tmc2208_set_microstep(MOTOR_MICROSTEP);
         tmc2208_set_stealthchop(MOTOR_STEALTHCHOP);
         tmc2208_set_interpolation(true);
     }
 
-    // NVS laden
+    // NVS laden (überschreibt TMC-Standardwerte falls gespeichert)
     nvs_load();
 
     // Queue & Task
@@ -246,21 +267,50 @@ bool motor_set_current(uint16_t run_ma, uint16_t hold_ma) {
     cmd.type           = CMD_SET_CURRENT;
     cmd.current.run_ma  = run_ma;
     cmd.current.hold_ma = (hold_ma == 0) ? run_ma / 2 : hold_ma;
-    return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    bool ok = xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    if (ok) {
+        s_prefs.begin("motor", false);
+        s_prefs.putUShort("tmc_run", run_ma);
+        s_prefs.putUShort("tmc_hold", cmd.current.hold_ma);
+        s_prefs.end();
+    }
+    return ok;
 }
 
 bool motor_set_microstep(uint8_t microstep) {
+    // Aktuelle Mikroschritte lesen für E-Steps-Anpassung
+    TMC2208Config cfg;
+    uint16_t old_ms = MOTOR_MICROSTEP;
+    if (tmc2208_read_config(&cfg)) old_ms = cfg.microsteps;
+
     MotorCmd cmd; cmd.type = CMD_SET_MICROSTEP; cmd.ms.microstep = microstep;
-    return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    bool ok = xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    if (ok) {
+        nvs_save_tmc_val("tmc_ms", microstep, nullptr, 0);
+        // E-Steps proportional anpassen damit Geschwindigkeit gleich bleibt
+        if (old_ms > 0 && old_ms != microstep) {
+            float new_esteps = s_esteps * (float)microstep / (float)old_ms;
+            s_esteps = new_esteps;
+            s_esteps_valid = true;
+            nvs_save_esteps(s_esteps);
+            Serial.printf("[MOTOR] Mikroschritte %u→%u, E-Steps angepasst: %.2f\n",
+                          old_ms, microstep, s_esteps);
+        }
+    }
+    return ok;
 }
 
 bool motor_set_stealthchop(bool enable) {
     MotorCmd cmd; cmd.type = CMD_SET_STEALTHCHOP; cmd.flag.enable = enable;
-    return xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    bool ok = xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
+    if (ok) nvs_save_tmc_val(nullptr, 0, "tmc_sc", enable ? 1 : 0);
+    return ok;
 }
 
 bool motor_set_interpolation(bool enable) {
-    return tmc2208_set_interpolation(enable);
+    bool ok = tmc2208_set_interpolation(enable);
+    if (ok) nvs_save_tmc_val(nullptr, 0, "tmc_intpol", enable ? 1 : 0);
+    return ok;
 }
 
 bool motor_get_tmc_status(TMC2208Status *status) {

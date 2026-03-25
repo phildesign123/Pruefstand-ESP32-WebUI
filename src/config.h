@@ -82,7 +82,7 @@
 #define NAU7802_SCL             22
 #define NAU7802_DRDY_PIN        34
 #define NAU7802_I2C_ADDR        0x2A
-#define NAU7802_I2C_FREQ        400000
+#define NAU7802_I2C_FREQ        100000   // 100 kHz (stabil bei langen Kabeln)
 #define LOAD_CELL_MEDIAN_SIZE   5
 #define LOAD_CELL_AVG_SIZE      10
 #define LOAD_CELL_TARE_SAMPLES  80
@@ -112,7 +112,7 @@
 // ── Sequencer ────────────────────────────────────────────────
 #define SEQ_TEMP_TOLERANCE      2.0f
 #define SEQ_TEMP_STABLE_TIME_S  10
-#define SEQ_HEATING_TIMEOUT_S   120
+#define SEQ_HEATING_TIMEOUT_S   240
 #define SEQ_LOG_INTERVAL_MS     100
 #define SEQ_MAX_SEQUENCES       20
 

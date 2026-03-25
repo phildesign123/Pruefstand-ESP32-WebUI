@@ -80,11 +80,23 @@ static bool sd_mount() {
     if (sd_mounted) return true;
     Serial.println("[DATALOG] SD-Karte wird gesucht...");
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
-    bool ok = SD.begin(SD_CS, *s_spi, 1000000);
+    bool ok = SD.begin(SD_CS, *s_spi, 400000);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     sd_mounted = ok;
     if (!ok) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
     else     Serial.printf("[DATALOG] SD-Karte: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+    return ok;
+}
+
+static bool sd_remount() {
+    Serial.println("[DATALOG] SD-Remount...");
+    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
+    SD.end();
+    vTaskDelay(pdMS_TO_TICKS(200));
+    bool ok = SD.begin(SD_CS, *s_spi, 400000);
+    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    sd_mounted = ok;
+    Serial.printf("[DATALOG] SD-Remount: %s\n", ok ? "OK" : "FEHLER");
     return ok;
 }
 
@@ -192,19 +204,31 @@ static void writer_task(void *arg) {
         if (need_flush && sd_mounted) {
             if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
 
-            s_log_file = SD.open(s_filename, FILE_APPEND);
-            if (s_log_file) {
-                uint32_t t0 = micros();
-                size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
-                s_log_file.flush();
-                s_log_file.close();
-                last_sd_write_us = micros() - t0;
-                Serial.printf("[DATALOG] Flush: %u/%u bytes, %lu µs\n",
-                              (unsigned)written, (unsigned)s_buf_pos, (unsigned long)last_sd_write_us);
-                s_buf_pos = 0;
-            } else {
-                Serial.printf("[DATALOG] FEHLER: Kann %s nicht öffnen (APPEND)!\n", s_filename);
-                s_state = DATALOG_ERROR;
+            bool write_ok = false;
+            for (int retry = 0; retry < 3 && !write_ok; retry++) {
+                if (retry > 0) {
+                    // Bei Retry: SD neu initialisieren
+                    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+                    sd_remount();
+                    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+                    if (!sd_mounted) break;
+                }
+                s_log_file = SD.open(s_filename, FILE_APPEND);
+                if (s_log_file) {
+                    size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                    s_log_file.flush();
+                    s_log_file.close();
+                    if (written == s_buf_pos) {
+                        write_ok = true;
+                        s_buf_pos = 0;
+                    }
+                }
+                if (!write_ok) {
+                    Serial.printf("[DATALOG] SD-Write Retry %d (remount)\n", retry + 1);
+                }
+            }
+            if (!write_ok) {
+                Serial.println("[DATALOG] SD-Write fehlgeschlagen, versuche nächsten Flush.");
             }
 
             if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);

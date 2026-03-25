@@ -78,7 +78,12 @@ static void sequencer_task(void *arg) {
                 vTaskDelay(pdMS_TO_TICKS(500));
             }
         }
-        if (s_stop_req) break;
+        if (s_stop_req) {
+            motor_stop(); datalog_stop(); hotend_set_target(0);
+            s_state = SEQ_IDLE; s_active_idx = -1; s_stop_req = false;
+            Serial.println("[SEQ] Gestoppt.");
+            continue;
+        }
 
         // ── RUNNING ─────────────────────────────────────────
         s_state = SEQ_RUNNING;
@@ -114,7 +119,12 @@ static void sequencer_task(void *arg) {
             s_remaining_s = 0;
         }
 
-        if (s_stop_req) break;
+        if (s_stop_req) {
+            motor_stop(); datalog_stop(); hotend_set_target(0);
+            s_state = SEQ_IDLE; s_active_idx = -1; s_stop_req = false;
+            Serial.println("[SEQ] Gestoppt.");
+            continue;
+        }
 
         Serial.printf("[SEQ] Sequenz %d abgeschlossen.\n", idx + 1);
 
@@ -135,15 +145,7 @@ static void sequencer_task(void *arg) {
                 s_move_queued = true;
             }
         }
-    }
-
-    // Aufräumen bei Stop
-    motor_stop();
-    datalog_stop();
-    hotend_set_target(0);
-    s_state     = SEQ_IDLE;
-    s_active_idx = -1;
-    Serial.println("[SEQ] Gestoppt.");
+    }  // for(;;) – Task kehrt nie zurück
 }
 
 void sequencer_init() {
