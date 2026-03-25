@@ -62,6 +62,7 @@ void setup() {
 
     // ── I2C-Bus initialisieren (NAU7802) ─────────────────────
     Wire.begin(NAU7802_SDA, NAU7802_SCL, NAU7802_I2C_FREQ);
+    Wire.setTimeout(10);  // 10 ms statt Default 1000 ms — verhindert 1s-Blockade bei Bus-Hang
 
     // ── Hotend (Sensor + PID + Lüfter) ───────────────────────
     hotend_init(vspi, spi_mutex);

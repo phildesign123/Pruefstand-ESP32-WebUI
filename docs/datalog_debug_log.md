@@ -248,6 +248,114 @@ WiFi-Stack hat höhere Priorität als der Writer und wird ebenfalls nicht blocki
 
 ---
 
+## 13. SD-Write Retry ohne Puffer-Verlust (2026-03-25)
+
+**Problem:** Der Writer-Task verlor gelegentlich einen kompletten 50-Zeilen-Puffer (5 Sekunden Daten)
+wenn ein SD-Write fehlschlug (Token Error / CRC Error). In der CSV sichtbar als Lücke von 50 fehlenden
+`sample_seq` (z.B. 249 → 300). Passierte ca. 1× pro 10–15 Minuten bei hoher Heizleistung.
+
+**Analyse der CSV-Daten:**
+- `sd_write_us` war durchgehend 0 — Feld wurde nicht befüllt
+- `loop_duration_us` Spitzen bis 117 µs korrelierten mit 1 ms Timestamp-Jitter
+- Samples 250–299 komplett fehlend → exakt ein 50er-Puffer verloren
+- Timing sonst gut: >99.5% der Samples im 100 ms Raster
+
+**Ursache:** Die alte Retry-Logik machte 3 blockierende Retries mit SD-Remount direkt hintereinander.
+Dabei wurde `lines_in_buf` nach dem Retry-Block bedingungslos auf 0 zurückgesetzt (Zeile 235),
+unabhängig vom Erfolg. Bei einem temporären SD-Fehler (1 fehlgeschlagener Write, nächster sofort OK)
+ging der gesamte Puffer verloren.
+
+**Lösung:** Nicht-blockierende Retry-Logik mit Puffer-Erhalt:
+
+| Schritt | Verhalten |
+|---|---|
+| Write fehlgeschlagen | `buffer_needs_write = true`, Puffer BEHALTEN |
+| Retry 1–2 | 100 ms warten, Datei neu öffnen, Write wiederholen |
+| Retry 3 (letzter) | SD komplett remounten, dann Write |
+| Alle 3 fehlgeschlagen | Puffer verwerfen, `sd_error_flag` setzen |
+| Retry erfolgreich | 0 Datenverlust, normal weiter |
+
+**Neue Error-Flag:**
+| Bit | Wert | Bedeutung |
+|---|---|---|
+| 4 | `0x10` | SD-Puffer verloren (nach 3 gescheiterten Retries) |
+
+**Änderungen:**
+- `sd_error_flag` (global volatile): Kommunikation Writer → Sampler
+- `sampler_task`: Prüft Flag, setzt Bit 4 in `error_flags` der nächsten CSV-Zeile
+- `writer_task`: Komplett umgebaut mit `buffer_needs_write`/`write_retries` State-Machine
+- `sd_write_us` wird jetzt tatsächlich per `micros()` gemessen (war vorher immer 0)
+- Während Retries sammeln sich neue Samples in der Queue (100 Einträge = 10 s Platz)
+
+**Ergebnis:** Bei einem einzelnen SD-Error gehen 0 Samples verloren statt 50.
+Nur bei 3 aufeinanderfolgenden Fehlern wird der Puffer verworfen (mit Bit 4 in CSV markiert).
+
+**Dateien:** `src/datalog/datalog.cpp`
+
+---
+
+## 14. Persistenter File-Handle + größerer Flush-Puffer (2026-03-25)
+
+**Beobachtung nach Retry-Fix:** Trotz stabiler CSV ohne Datenlücken lagen einzelne `sd_write_us`
+noch bei ~178 ms. Die Ursache war nicht der eigentliche Block-Write, sondern der Overhead aus
+`SD.open(FILE_APPEND)` + `flush()` + `close()` bei jedem Flush.
+
+**Ursache im Code:**
+- Datei wurde für jeden Flush neu geöffnet
+- `FILE_APPEND` muss FAT/Directory auflösen und ans Dateiende springen
+- bei 100 ms Logger-Takt addiert sich das unnötig zu großen Write-Latenzen
+
+**Lösung:**
+- Datei bei `datalog_start()` einmalig öffnen
+- Header schreiben, Handle offen lassen
+- im Writer nur noch `write()` + `flush()`
+- `close()` nur noch bei Stop, Datei-Rotation oder Fehler-/Retry-Pfad
+
+**Zusätzliche Änderungen:**
+- `DATALOG_FLUSH_SAMPLES`: 50 → **100**
+- `DATALOG_BUFFER_SIZE`: 8192 → **16384**
+- `DATALOG_QUEUE_LEN`: neu **200**
+- SD-Init-Speed als Konstante `SD_SPI_MHZ = 4000000`
+
+**Ergebnis in der Praxis:**
+- keine `sample_seq`-Lücken mehr
+- `sd_write_us` typischerweise ~18–24 ms
+- Maximalwerte nur noch ~37–40 ms statt ~178 ms
+- `error_flags` in sauberen Läufen durchgehend 0
+
+**Dateien:** `src/config.h`, `src/datalog/datalog.cpp`
+
+---
+
+## 15. I2C-Diagnose korrigiert: nur echte Kommunikationsfehler zählen (2026-03-25)
+
+**Problem:** Die erste Diagnose-Version interpretierte `!nau7802_is_ready()` als I2C-Fehler.
+Das erzeugte massenhaft scheinbare "Fehlerbursts", obwohl der NAU7802 oft nur noch keinen neuen
+Messwert fertig hatte (`CR=0` bei 80 SPS = normales Verhalten).
+
+**Symptom im Serial-Log:**
+- sehr viele Bursts mit genau 1 Fehlversuch
+- Abstände von ~12–14 ms
+- keine Recoveries, kein realer Bus-Hang
+
+**Ursache:** `not ready` wurde mit "I2C-Kommunikation fehlgeschlagen" verwechselt.
+
+**Lösung:**
+- echte I2C-Fehler nur noch direkt an den `Wire`-Transfers erkennen
+- in `nau7802.cpp` wird der letzte Kommunikationsstatus gespeichert
+- `load_cell_task` zählt nur dann Bursts/Recoveries, wenn der Transfer selbst scheitert
+- bei `not ready`, aber gültiger Kommunikation, nur kurzer Delay und kein Log-Spam
+- zusätzlich `Wire.setTimeout(10)` im Setup, damit Bus-Hänger keine 1s-Blockade mehr erzeugen
+
+**Ergebnis:**
+- Serial-Log bleibt ruhig im Normalbetrieb
+- echte I2C-Ausfälle sind weiterhin sichtbar
+- Diagnose ist jetzt aussagekräftig statt irreführend
+
+**Dateien:** `src/load_cell/nau7802.cpp`, `src/load_cell/nau7802.h`, `src/load_cell/load_cell.cpp`, `src/main.cpp`
+
+---
+
 ## Offene Fragen
 
 - [x] Spike-Ursache: `SD.open()`/`f.close()` → persistenter File-Handle
