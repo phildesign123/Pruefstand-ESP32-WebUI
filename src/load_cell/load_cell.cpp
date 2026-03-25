@@ -50,7 +50,10 @@ static void nvs_save() {
 
 // ── Sampling-Task ─────────────────────────────────────────────
 
-static uint32_t s_i2c_errors = 0;
+static uint32_t s_i2c_errors       = 0;
+static uint32_t s_i2c_error_bursts = 0;
+static uint32_t s_i2c_recoveries   = 0;
+static uint32_t s_i2c_max_streak   = 0;
 
 static void i2c_bus_recovery() {
     // I2C-Bus Recovery: Takte generieren um hängenden Slave zu lösen
@@ -71,15 +74,48 @@ static void load_cell_task(void *arg) {
     for (;;) {
         // Polling: DRDY-Register oder GPIO prüfen (80 SPS = 12.5 ms)
         if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) {
-            vTaskDelay(pdMS_TO_TICKS(2));
-            s_i2c_errors++;
-            // Nach 500 fehlgeschlagenen Versuchen (~1s): Bus-Recovery
-            if (s_i2c_errors >= 500) {
-                i2c_bus_recovery();
-                nau7802_init(*s_wire, s_i2c_mutex);
-                s_i2c_errors = 0;
+            if (!nau7802_last_comm_ok()) {
+                if (s_i2c_errors == 0) {
+                    s_i2c_error_bursts++;
+                    Serial.printf("[LOADCELL] I2C-Fehlerburst #%lu gestartet @ %lu ms\n",
+                                  (unsigned long)s_i2c_error_bursts, (unsigned long)millis());
+                }
+                vTaskDelay(pdMS_TO_TICKS(2));
+                s_i2c_errors++;
+                if (s_i2c_errors > s_i2c_max_streak) s_i2c_max_streak = s_i2c_errors;
+                // Nach 500 fehlgeschlagenen Versuchen (~1s): Bus-Recovery
+                if (s_i2c_errors >= 500) {
+                    s_i2c_recoveries++;
+                    Serial.printf("[LOADCELL] I2C-Recovery #%lu nach %lu Fehlversuchen (max=%lu) @ %lu ms\n",
+                                  (unsigned long)s_i2c_recoveries,
+                                  (unsigned long)s_i2c_errors,
+                                  (unsigned long)s_i2c_max_streak,
+                                  (unsigned long)millis());
+                    i2c_bus_recovery();
+                    nau7802_init(*s_wire, s_i2c_mutex);
+                    s_i2c_errors = 0;
+                }
+            } else {
+                if (s_i2c_errors > 0) {
+                    Serial.printf("[LOADCELL] I2C wieder stabil nach %lu Fehlversuchen (Bursts=%lu, Recoveries=%lu, Max=%lu) @ %lu ms\n",
+                                  (unsigned long)s_i2c_errors,
+                                  (unsigned long)s_i2c_error_bursts,
+                                  (unsigned long)s_i2c_recoveries,
+                                  (unsigned long)s_i2c_max_streak,
+                                  (unsigned long)millis());
+                    s_i2c_errors = 0;
+                }
+                vTaskDelay(pdMS_TO_TICKS(1));
             }
             continue;
+        }
+        if (s_i2c_errors > 0) {
+            Serial.printf("[LOADCELL] I2C wieder stabil nach %lu Fehlversuchen (Bursts=%lu, Recoveries=%lu, Max=%lu) @ %lu ms\n",
+                          (unsigned long)s_i2c_errors,
+                          (unsigned long)s_i2c_error_bursts,
+                          (unsigned long)s_i2c_recoveries,
+                          (unsigned long)s_i2c_max_streak,
+                          (unsigned long)millis());
         }
         s_i2c_errors = 0;
 

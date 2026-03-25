@@ -48,10 +48,15 @@ static char              s_preamble[512] = {};
 static uint32_t          s_start_ms     = 0;
 static Preferences       s_prefs;
 static volatile uint32_t s_sample_seq   = 0;
+static volatile bool     sd_error_flag  = false;  // Bit 4: Puffer verloren
+static uint32_t          s_sd_write_failures = 0;
+static uint32_t          s_sd_retry_success  = 0;
+static uint32_t          s_sd_retry_failures = 0;
+static uint32_t          s_sd_buffers_lost   = 0;
+static uint32_t          s_sd_max_write_us   = 0;
 
 // Queue: Sampler → Writer
 static QueueHandle_t     s_sample_queue = nullptr;
-#define SAMPLE_QUEUE_LEN  100   // 10 Sekunden Puffer bei 10 Hz
 
 // ── Dateiname generieren ─────────────────────────────────────
 
@@ -75,12 +80,13 @@ static void make_filename(char *buf, size_t len) {
 // ── SD-Karte initialisieren ─────────────────────────────────
 
 static volatile bool sd_mounted = false;
+static File          s_log_file;
 
 static bool sd_mount() {
     if (sd_mounted) return true;
     Serial.println("[DATALOG] SD-Karte wird gesucht...");
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
-    bool ok = SD.begin(SD_CS, *s_spi, 400000);
+    bool ok = SD.begin(SD_CS, *s_spi, SD_SPI_MHZ);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     sd_mounted = ok;
     if (!ok) Serial.println("[DATALOG] SD-Karte nicht gefunden!");
@@ -93,11 +99,25 @@ static bool sd_remount() {
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
     SD.end();
     vTaskDelay(pdMS_TO_TICKS(200));
-    bool ok = SD.begin(SD_CS, *s_spi, 400000);
+    bool ok = SD.begin(SD_CS, *s_spi, SD_SPI_MHZ);
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     sd_mounted = ok;
     Serial.printf("[DATALOG] SD-Remount: %s\n", ok ? "OK" : "FEHLER");
     return ok;
+}
+
+static void close_log_file_locked() {
+    if (s_log_file) {
+        s_log_file.flush();
+        s_log_file.close();
+    }
+}
+
+static bool ensure_log_file_open_locked() {
+    if (s_log_file) return true;
+    if (!sd_mounted) return false;
+    s_log_file = SD.open(s_filename, FILE_APPEND);
+    return (bool)s_log_file;
 }
 
 // ── Sampler-Task (Core 1, Prio HOCH) ─────────────────────────
@@ -123,6 +143,7 @@ static void sampler_task(void *arg) {
         if (hotend_has_fault())  flags |= 0x01;
         if (sensor_has_fault())  flags |= 0x02;
         if (!sd_mounted)         flags |= 0x04;
+        if (sd_error_flag) { flags |= 0x10; sd_error_flag = false; }
 
         uint32_t loop_us = micros() - loop_start;
 
@@ -138,8 +159,10 @@ static void sampler_task(void *arg) {
 
         // Non-blocking in Queue schreiben
         if (xQueueSend(s_sample_queue, &sample, 0) != pdTRUE) {
-            // Queue voll — Writer kommt nicht hinterher
-            // Nächstes Sample bekommt das Flag
+            // Queue voll — Writer kommt nicht hinterher.
+            // Das nächste erfolgreich geloggte Sample markiert den Verlust.
+            sd_error_flag = true;
+            Serial.println("[DATALOG] WARNUNG: Sample-Queue voll, Messwert verworfen.");
         }
     }
 }
@@ -148,30 +171,103 @@ static void sampler_task(void *arg) {
 // Liest Samples aus Queue, sammelt in RAM-Puffer, schreibt auf SD.
 // Kann beliebig lange blockieren — stört den Sampler nicht.
 
-static File   s_log_file;
 static char   s_buf[DATALOG_BUFFER_SIZE];
 static size_t s_buf_pos = 0;
 
 static void writer_task(void *arg) {
     SampleData sample;
-    int      lines_in_buf   = 0;
-    uint32_t last_sd_write_us = 0;
-    size_t   bytes_since_rot  = 0;
+    int      lines_in_buf      = 0;
+    uint32_t last_sd_write_us  = 0;
+    size_t   bytes_since_rot   = 0;
+    bool     buffer_needs_write = false;   // Puffer wartet auf Retry
+    int      write_retries      = 0;
 
     for (;;) {
-        // Auf Sample warten (blockiert bis Daten da)
+        // ── Retry-Pfad: vorheriger Write fehlgeschlagen ──────────
+        if (buffer_needs_write) {
+            vTaskDelay(pdMS_TO_TICKS(100));  // SD-Karte erholen lassen
+
+            if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+
+            // Letzter Retry: SD komplett remounten
+            if (write_retries == 2) {
+                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+                sd_remount();
+                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+            }
+
+            bool ok = false;
+            if (sd_mounted) {
+                close_log_file_locked();
+                if (ensure_log_file_open_locked()) {
+                    size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                    s_log_file.flush();
+                    if (written == s_buf_pos) ok = true;
+                }
+            }
+
+            if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+
+            if (ok) {
+                s_sd_retry_success++;
+                Serial.printf("[DATALOG] SD-Write Retry %d erfolgreich (%u Bytes)\n",
+                              write_retries + 1, (unsigned)s_buf_pos);
+                Serial.printf("[DATALOG] SD-Stats: fail=%lu retry_ok=%lu retry_fail=%lu lost=%lu max_write_us=%lu\n",
+                              (unsigned long)s_sd_write_failures,
+                              (unsigned long)s_sd_retry_success,
+                              (unsigned long)s_sd_retry_failures,
+                              (unsigned long)s_sd_buffers_lost,
+                              (unsigned long)s_sd_max_write_us);
+                s_buf_pos = 0;
+                lines_in_buf = 0;
+                buffer_needs_write = false;
+                write_retries = 0;
+            } else {
+                write_retries++;
+                s_sd_retry_failures++;
+                Serial.printf("[DATALOG] SD-Write Retry %d fehlgeschlagen\n", write_retries);
+                Serial.printf("[DATALOG] SD-Stats: fail=%lu retry_ok=%lu retry_fail=%lu lost=%lu max_write_us=%lu\n",
+                              (unsigned long)s_sd_write_failures,
+                              (unsigned long)s_sd_retry_success,
+                              (unsigned long)s_sd_retry_failures,
+                              (unsigned long)s_sd_buffers_lost,
+                              (unsigned long)s_sd_max_write_us);
+                if (write_retries >= 3) {
+                    // 3 Retries erschöpft — Puffer verwerfen
+                    s_sd_buffers_lost++;
+                    Serial.printf("[DATALOG] Puffer verworfen: %d Zeilen, %u Bytes\n",
+                                  lines_in_buf, (unsigned)s_buf_pos);
+                    Serial.printf("[DATALOG] SD-Stats: fail=%lu retry_ok=%lu retry_fail=%lu lost=%lu max_write_us=%lu\n",
+                                  (unsigned long)s_sd_write_failures,
+                                  (unsigned long)s_sd_retry_success,
+                                  (unsigned long)s_sd_retry_failures,
+                                  (unsigned long)s_sd_buffers_lost,
+                                  (unsigned long)s_sd_max_write_us);
+                    s_buf_pos = 0;
+                    lines_in_buf = 0;
+                    buffer_needs_write = false;
+                    write_retries = 0;
+                    sd_error_flag = true;  // Bit 4 in nächstem Sample
+                }
+            }
+            continue;  // Zurück zum Loop-Anfang
+        }
+
+        // ── Normaler Betrieb: auf Sample warten ──────────────────
         if (xQueueReceive(s_sample_queue, &sample, pdMS_TO_TICKS(1000)) != pdTRUE) {
-            // Timeout — kein Sample bekommen (nicht recording oder idle)
-            // Restpuffer schreiben wenn Aufzeichnung gestoppt
+            // Timeout — Restpuffer schreiben wenn Aufzeichnung gestoppt
             if (s_state != DATALOG_RECORDING && s_buf_pos > 0) {
                 if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-                if (!s_log_file) s_log_file = SD.open(s_filename, FILE_APPEND);
-                if (s_log_file) {
+                if (ensure_log_file_open_locked()) {
                     s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
                     s_log_file.flush();
-                    s_log_file.close();
                     s_buf_pos = 0;
                 }
+                close_log_file_locked();
+                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            } else if (s_state != DATALOG_RECORDING) {
+                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
+                close_log_file_locked();
                 if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
             }
             continue;
@@ -204,35 +300,40 @@ static void writer_task(void *arg) {
         if (need_flush && sd_mounted) {
             if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
 
+            uint32_t t0 = micros();
             bool write_ok = false;
-            for (int retry = 0; retry < 3 && !write_ok; retry++) {
-                if (retry > 0) {
-                    // Bei Retry: SD neu initialisieren
-                    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
-                    sd_remount();
-                    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
-                    if (!sd_mounted) break;
-                }
-                s_log_file = SD.open(s_filename, FILE_APPEND);
-                if (s_log_file) {
-                    size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
-                    s_log_file.flush();
-                    s_log_file.close();
-                    if (written == s_buf_pos) {
-                        write_ok = true;
-                        s_buf_pos = 0;
-                    }
-                }
-                if (!write_ok) {
-                    Serial.printf("[DATALOG] SD-Write Retry %d (remount)\n", retry + 1);
-                }
-            }
-            if (!write_ok) {
-                Serial.println("[DATALOG] SD-Write fehlgeschlagen, versuche nächsten Flush.");
+
+            if (ensure_log_file_open_locked()) {
+                size_t written = s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                s_log_file.flush();
+                if (written == s_buf_pos) write_ok = true;
             }
 
+            last_sd_write_us = micros() - t0;
+            if (last_sd_write_us > s_sd_max_write_us) s_sd_max_write_us = last_sd_write_us;
             if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
-            lines_in_buf = 0;
+
+            if (write_ok) {
+                s_buf_pos = 0;
+                lines_in_buf = 0;
+            } else {
+                // Write fehlgeschlagen — Puffer BEHALTEN, Retry im nächsten Zyklus
+                s_sd_write_failures++;
+                Serial.printf("[DATALOG] SD-Write fehlgeschlagen, Retry geplant (%d Zeilen)\n",
+                              lines_in_buf);
+                Serial.printf("[DATALOG] SD-Stats: fail=%lu retry_ok=%lu retry_fail=%lu lost=%lu max_write_us=%lu\n",
+                              (unsigned long)s_sd_write_failures,
+                              (unsigned long)s_sd_retry_success,
+                              (unsigned long)s_sd_retry_failures,
+                              (unsigned long)s_sd_buffers_lost,
+                              (unsigned long)s_sd_max_write_us);
+                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
+                close_log_file_locked();
+                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+                buffer_needs_write = true;
+                write_retries = 0;
+                last_sd_write_us = 0;
+            }
         }
 
         // Datei-Rotation prüfen
@@ -241,6 +342,7 @@ static void writer_task(void *arg) {
             char new_name[72];
             make_filename(new_name, sizeof(new_name));
             strncpy(s_filename, new_name, sizeof(s_filename));
+            close_log_file_locked();
             s_log_file = SD.open(s_filename, FILE_WRITE);
             if (s_log_file) { s_log_file.println(CSV_HEADER); s_log_file.close(); }
             if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
@@ -255,7 +357,7 @@ bool datalog_init(SPIClass &spi, SemaphoreHandle_t spi_mutex) {
     s_spi       = &spi;
     s_spi_mutex = spi_mutex;
 
-    s_sample_queue = xQueueCreate(SAMPLE_QUEUE_LEN, sizeof(SampleData));
+    s_sample_queue = xQueueCreate(DATALOG_QUEUE_LEN, sizeof(SampleData));
 
     // SD-Karte synchron mounten (verhindert Race-Conditions mit WebUI)
     sd_mount();
@@ -309,13 +411,18 @@ bool datalog_start(uint32_t interval_ms, const char *filename) {
     s_start_ms = millis();
     s_sample_seq = 0;
     s_buf_pos = 0;
+    s_sd_write_failures = 0;
+    s_sd_retry_success  = 0;
+    s_sd_retry_failures = 0;
+    s_sd_buffers_lost   = 0;
+    s_sd_max_write_us   = 0;
 
     // Queue leeren
     SampleData dummy;
     while (xQueueReceive(s_sample_queue, &dummy, 0) == pdTRUE) {}
 
     if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, portMAX_DELAY);
-    if (s_log_file) { s_log_file.flush(); s_log_file.close(); }
+    close_log_file_locked();
     s_log_file = SD.open(s_filename, FILE_WRITE);
     if (!s_log_file) {
         Serial.printf("[DATALOG] FEHLER: Kann %s nicht erstellen!\n", s_filename);
@@ -330,7 +437,6 @@ bool datalog_start(uint32_t interval_ms, const char *filename) {
     }
     s_log_file.println(CSV_HEADER);
     s_log_file.flush();
-    s_log_file.close();
 
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
 
@@ -343,6 +449,9 @@ bool datalog_start(uint32_t interval_ms, const char *filename) {
 bool datalog_stop() {
     s_state = DATALOG_STOPPING;
     vTaskDelay(pdMS_TO_TICKS(1500));  // Writer-Task hat 1s Timeout + Flush-Zeit
+    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
+    close_log_file_locked();
+    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     s_state = DATALOG_IDLE;
     Serial.println("[DATALOG] Aufzeichnung gestoppt.");
     return true;

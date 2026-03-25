@@ -42,3 +42,4 @@
 bool    nau7802_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex);
 int32_t nau7802_read_raw(TwoWire &wire, SemaphoreHandle_t i2c_mutex);
 bool    nau7802_is_ready(TwoWire &wire, SemaphoreHandle_t i2c_mutex);
+bool    nau7802_last_comm_ok();

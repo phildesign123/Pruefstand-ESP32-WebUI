@@ -1,13 +1,22 @@
 #include "nau7802.h"
 #include "../config.h"
 
+static volatile bool s_last_comm_ok = true;
+
 static uint8_t i2c_read_reg(TwoWire &wire, SemaphoreHandle_t mx, uint8_t reg) {
     if (mx) xSemaphoreTake(mx, portMAX_DELAY);
+    uint8_t val = 0;
     wire.beginTransmission(NAU7802_I2C_ADDR);
     wire.write(reg);
-    wire.endTransmission(false);
-    wire.requestFrom((uint8_t)NAU7802_I2C_ADDR, (uint8_t)1);
-    uint8_t val = wire.available() ? wire.read() : 0;
+    uint8_t tx_err = wire.endTransmission(false);
+    int rx_count = 0;
+    if (tx_err == 0) rx_count = wire.requestFrom((uint8_t)NAU7802_I2C_ADDR, (uint8_t)1);
+    if (rx_count >= 1 && wire.available()) {
+        val = wire.read();
+        s_last_comm_ok = true;
+    } else {
+        s_last_comm_ok = false;
+    }
     if (mx) xSemaphoreGive(mx);
     return val;
 }
@@ -78,14 +87,18 @@ int32_t nau7802_read_raw(TwoWire &wire, SemaphoreHandle_t mx) {
     if (mx) xSemaphoreTake(mx, portMAX_DELAY);
     wire.beginTransmission(NAU7802_I2C_ADDR);
     wire.write(NAU7802_REG_ADC_DATA);
-    wire.endTransmission(false);
-    wire.requestFrom((uint8_t)NAU7802_I2C_ADDR, (uint8_t)3);
+    uint8_t tx_err = wire.endTransmission(false);
+    int rx_count = 0;
+    if (tx_err == 0) rx_count = wire.requestFrom((uint8_t)NAU7802_I2C_ADDR, (uint8_t)3);
 
     int32_t raw = 0;
-    if (wire.available() >= 3) {
+    if (rx_count >= 3 && wire.available() >= 3) {
         raw  = (int32_t)wire.read() << 16;
         raw |= (int32_t)wire.read() <<  8;
         raw |=          wire.read();
+        s_last_comm_ok = true;
+    } else {
+        s_last_comm_ok = false;
     }
     if (mx) xSemaphoreGive(mx);
 
@@ -96,4 +109,8 @@ int32_t nau7802_read_raw(TwoWire &wire, SemaphoreHandle_t mx) {
 
 bool nau7802_is_ready(TwoWire &wire, SemaphoreHandle_t mx) {
     return (i2c_read_reg(wire, mx, NAU7802_REG_PU_CTRL) & PU_CTRL_CR) != 0;
+}
+
+bool nau7802_last_comm_ok() {
+    return s_last_comm_ok;
 }

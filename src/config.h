@@ -10,6 +10,7 @@
 #define MAX_MISO  19
 #define MAX_CLK   18
 #define SD_CS     4
+#define SD_SPI_MHZ  4000000    // 4 MHz (400 kHz ist nur Init-Speed)
 
 // ── Heizer ──────────────────────────────────────────────────
 #define HEATER_PIN          25
@@ -90,8 +91,9 @@
 
 // ── Datenlogger / SD-Karte ───────────────────────────────────
 #define DATALOG_INTERVAL_MS      100           // 10 Hz (Gewicht)
-#define DATALOG_BUFFER_SIZE     8192          // RAM-Puffer in Bytes für CSV-Zeilen
-#define DATALOG_FLUSH_SAMPLES    50           // Alle N Samples auf SD schreiben + flush (50 = alle 5s bei 10Hz)
+#define DATALOG_BUFFER_SIZE    16384          // RAM-Puffer in Bytes für CSV-Zeilen
+#define DATALOG_FLUSH_SAMPLES   100           // Alle N Samples auf SD schreiben + flush (100 = alle 10s bei 10Hz)
+#define DATALOG_QUEUE_LEN       200           // Queue zwischen Sampler und Writer (20 s Reserve bei 10 Hz)
 #define DATALOG_MAX_FILE_SIZE_MB 10
 #define DATALOG_MAX_FILES        100
 
