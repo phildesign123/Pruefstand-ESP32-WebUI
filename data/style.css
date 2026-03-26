@@ -177,7 +177,6 @@ main {
   margin-bottom: 18px;
 }
 .card:hover, .section:hover {
-  background: var(--card-hover);
   box-shadow: var(--shadow-lg);
 }
 .card:hover:not(:has(select:focus, input:focus)), .section:hover:not(:has(select:focus, input:focus)) {
@@ -384,9 +383,7 @@ tfoot td input { padding-left: 8px; }
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  transition: all 0.2s var(--ease);
 }
-.file-row:hover { background: rgba(99,102,241,0.04); transform: translateX(4px); }
 .file-row:last-child { border-bottom: none; }
 .file-name { flex: 1; font-size: 13px; font-variant-numeric: tabular-nums; }
 .file-size { color: var(--text-dim); font-size: 12px; min-width: 60px; }
