@@ -283,6 +283,10 @@ function jog(dist) {
   wsSend({ cmd: 'motor_jog', dist: Math.abs(dist), speed,
            dir: dist < 0 ? 'rev' : 'fwd' });
 }
+function motorStart() {
+  const speed = parseFloat(document.getElementById('jog-speed').value) || 3;
+  api('POST', '/api/motor/move', { speed, duration_s: 3600, dir: 'fwd' });
+}
 async function motorStop() {
   wsSend({ cmd: 'motor_stop' });
 }
