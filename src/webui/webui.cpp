@@ -448,7 +448,7 @@ static void api_seq_presets_get(AsyncWebServerRequest *req) {
     resp["presets"] = doc.as<JsonObject>();
     String out;
     serializeJson(resp, out);
-    Serial.printf("[PRESETS] GET → %s\n", out.c_str());
+
     req->send(200, "application/json", out);
 }
 
@@ -472,7 +472,7 @@ static void api_seq_presets_save(AsyncWebServerRequest *req, JsonVariant &body) 
         o["speed_mm_s"] = s["speed_mm_s"] | 0.0f;
         o["duration_s"] = s["duration_s"] | 0.0f;
     }
-    Serial.printf("[PRESETS] SAVE '%s' (%d seqs)\n", name, (int)seqs.size());
+
     bool ok = presets_save(doc);
     req->send(ok ? 200 : 500, "application/json",
               ok ? "{\"ok\":true}" : "{\"error\":\"sd write\"}");
@@ -487,7 +487,7 @@ static void api_seq_presets_delete(AsyncWebServerRequest *req, JsonVariant &body
     JsonDocument doc;
     presets_load(doc);
     doc.remove(name);
-    Serial.printf("[PRESETS] DELETE '%s'\n", name);
+
     bool ok = presets_save(doc);
     req->send(ok ? 200 : 500, "application/json",
               ok ? "{\"ok\":true}" : "{\"error\":\"sd write\"}");

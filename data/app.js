@@ -364,10 +364,8 @@ async function seqPresetsRefreshDropdown() {
   const sel = document.getElementById('seq-preset');
   if (!sel) return;
   const d = await api('GET', '/api/preset-list');
-  console.log('[PRESETS] GET response:', JSON.stringify(d));
   const presets = (d && d.presets) ? d.presets : {};
   const names = Object.keys(presets).sort();
-  console.log('[PRESETS] Names:', names);
   sel.innerHTML = '<option value="">— Gespeicherte Messreihe —</option>'
     + names.map(n => `<option value="${n}">${n}</option>`).join('');
 }
@@ -378,16 +376,14 @@ async function seqPresetSave() {
   if (!name) { toast('Bitte einen Namen eingeben.'); return; }
   if (sequences.length === 0) { toast('Keine Messreihe vorhanden.'); return; }
   const seqs = sequences.map(s => ({ temp_c: s.temp_c, speed_mm_s: s.speed_mm_s, duration_s: s.duration_s }));
-  console.log('[PRESETS] Saving:', name, seqs);
   const r = await api('POST', '/api/preset-save', { name: name, sequences: seqs });
-  console.log('[PRESETS] Save response:', r);
   if (r && r.ok) {
     nameEl.value = '';
     await seqPresetsRefreshDropdown();
     document.getElementById('seq-preset').value = name;
     toast(`Messreihe "${name}" gespeichert.`);
   } else {
-    toast('Fehler beim Speichern: ' + JSON.stringify(r));
+    toast('Fehler beim Speichern.');
   }
 }
 
