@@ -50,3 +50,7 @@ bool datalog_get_sd_info(DatalogSDInfo *info);
 // Chunked-Read für HTTP-Download (mutex-aware)
 bool datalog_read_chunk(const char *name, size_t offset,
                         uint8_t *buf, size_t buf_size, size_t *bytes_read);
+
+// Generische Datei-Operationen (mutex-geschützt, für kleine Dateien)
+bool datalog_read_raw_file(const char *path, char *buf, size_t max_len, size_t *out_len);
+bool datalog_write_raw_file(const char *path, const char *data, size_t len);

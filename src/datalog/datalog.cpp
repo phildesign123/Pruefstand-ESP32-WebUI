@@ -539,3 +539,38 @@ bool datalog_read_chunk(const char *name, size_t offset,
     if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
     return true;
 }
+
+// ── Generische Datei-Operationen (für kleine Dateien wie presets.json) ──
+
+bool datalog_read_raw_file(const char *path, char *buf, size_t max_len, size_t *out_len) {
+    if (!sd_mount()) return false;
+    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
+    File f = SD.open(path, FILE_READ);
+    if (!f) {
+        if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+        *out_len = 0;
+        return true;  // Datei existiert nicht → leeres Ergebnis
+    }
+    size_t sz = f.size();
+    if (sz > max_len - 1) sz = max_len - 1;
+    size_t rd = f.read((uint8_t*)buf, sz);
+    f.close();
+    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    buf[rd] = '\0';
+    *out_len = rd;
+    return true;
+}
+
+bool datalog_write_raw_file(const char *path, const char *data, size_t len) {
+    if (!sd_mount()) return false;
+    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(3000));
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) {
+        if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+        return false;
+    }
+    size_t written = f.write((const uint8_t*)data, len);
+    f.close();
+    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    return written == len;
+}

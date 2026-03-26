@@ -358,6 +358,68 @@ async function seqClear() {
   updateSeqTable();
 }
 
+// ── Messreihen-Presets (SD-Karte via API) ────────────────────
+
+async function seqPresetsRefreshDropdown() {
+  const sel = document.getElementById('seq-preset');
+  if (!sel) return;
+  const d = await api('GET', '/api/preset-list');
+  console.log('[PRESETS] GET response:', JSON.stringify(d));
+  const presets = (d && d.presets) ? d.presets : {};
+  const names = Object.keys(presets).sort();
+  console.log('[PRESETS] Names:', names);
+  sel.innerHTML = '<option value="">— Gespeicherte Messreihe —</option>'
+    + names.map(n => `<option value="${n}">${n}</option>`).join('');
+}
+
+async function seqPresetSave() {
+  const nameEl = document.getElementById('seq-preset-name');
+  const name = nameEl.value.trim();
+  if (!name) { toast('Bitte einen Namen eingeben.'); return; }
+  if (sequences.length === 0) { toast('Keine Messreihe vorhanden.'); return; }
+  const seqs = sequences.map(s => ({ temp_c: s.temp_c, speed_mm_s: s.speed_mm_s, duration_s: s.duration_s }));
+  console.log('[PRESETS] Saving:', name, seqs);
+  const r = await api('POST', '/api/preset-save', { name: name, sequences: seqs });
+  console.log('[PRESETS] Save response:', r);
+  if (r && r.ok) {
+    nameEl.value = '';
+    await seqPresetsRefreshDropdown();
+    document.getElementById('seq-preset').value = name;
+    toast(`Messreihe "${name}" gespeichert.`);
+  } else {
+    toast('Fehler beim Speichern: ' + JSON.stringify(r));
+  }
+}
+
+async function seqPresetLoad() {
+  const sel = document.getElementById('seq-preset');
+  const name = sel.value;
+  if (!name) return;
+  const d = await api('GET', '/api/preset-list');
+  const presets = (d && d.presets) ? d.presets : {};
+  const rows = presets[name];
+  if (!rows || rows.length === 0) { toast('Preset leer.'); return; }
+  await api('POST', '/api/sequence/clear');
+  for (const r of rows) {
+    await api('POST', '/api/sequence/add', { temp_c: r.temp_c, speed_mm_s: r.speed_mm_s, duration_s: r.duration_s });
+  }
+  await loadSequences();
+  toast(`Messreihe "${name}" geladen.`);
+}
+
+async function seqPresetDelete() {
+  const sel = document.getElementById('seq-preset');
+  const name = sel.value;
+  if (!name) { toast('Bitte eine Messreihe auswählen.'); return; }
+  const r = await api('POST', '/api/preset-del', { name });
+  if (r && r.ok) {
+    await seqPresetsRefreshDropdown();
+    toast(`Messreihe "${name}" gelöscht.`);
+  } else {
+    toast('Fehler beim Löschen.');
+  }
+}
+
 // ── Einstellungen ─────────────────────────────────────────────
 async function refreshSettings() {
   // Wägezelle
@@ -688,5 +750,6 @@ window.addEventListener('DOMContentLoaded', () => {
   initChart();
   wsConnect();
   loadSequences();
+  seqPresetsRefreshDropdown();
   refreshRec();
 });

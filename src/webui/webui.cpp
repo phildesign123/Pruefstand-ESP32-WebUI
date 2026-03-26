@@ -414,6 +414,85 @@ static void api_seq_delete(AsyncWebServerRequest *req, JsonVariant &body) {
         req->send(200, "application/json", "{\"ok\":true}");
 }
 
+// --- Sequencer-Presets (SD-Karte) ---
+#define PRESETS_PATH "/presets.json"
+#define PRESETS_MAX_SIZE 8192
+
+static bool presets_load(JsonDocument &doc) {
+    char *buf = (char*)malloc(PRESETS_MAX_SIZE);
+    if (!buf) return false;
+    size_t len = 0;
+    bool ok = datalog_read_raw_file(PRESETS_PATH, buf, PRESETS_MAX_SIZE, &len);
+    if (ok && len > 0) {
+        if (deserializeJson(doc, buf, len) != DeserializationError::Ok)
+            doc.clear();
+    }
+    free(buf);
+    return ok;
+}
+
+static bool presets_save(JsonDocument &doc) {
+    String out;
+    serializeJson(doc, out);
+    return datalog_write_raw_file(PRESETS_PATH, out.c_str(), out.length());
+}
+
+static void api_seq_presets_get(AsyncWebServerRequest *req) {
+    JsonDocument doc;
+    if (!presets_load(doc)) {
+        req->send(500, "application/json", "{\"error\":\"sd read\"}");
+        return;
+    }
+    // Response: {"presets": { ... }}
+    JsonDocument resp;
+    resp["presets"] = doc.as<JsonObject>();
+    String out;
+    serializeJson(resp, out);
+    Serial.printf("[PRESETS] GET → %s\n", out.c_str());
+    req->send(200, "application/json", out);
+}
+
+static void api_seq_presets_save(AsyncWebServerRequest *req, JsonVariant &body) {
+    const char *name = body["name"] | (const char*)nullptr;
+    if (!name || strlen(name) == 0) {
+        req->send(400, "application/json", "{\"error\":\"name missing\"}");
+        return;
+    }
+    JsonArray seqs = body["sequences"].as<JsonArray>();
+    if (seqs.isNull() || seqs.size() == 0) {
+        req->send(400, "application/json", "{\"error\":\"sequences missing\"}");
+        return;
+    }
+    JsonDocument doc;
+    presets_load(doc);
+    JsonArray arr = doc[name].to<JsonArray>();
+    for (JsonObject s : seqs) {
+        JsonObject o = arr.add<JsonObject>();
+        o["temp_c"]     = s["temp_c"] | 0.0f;
+        o["speed_mm_s"] = s["speed_mm_s"] | 0.0f;
+        o["duration_s"] = s["duration_s"] | 0.0f;
+    }
+    Serial.printf("[PRESETS] SAVE '%s' (%d seqs)\n", name, (int)seqs.size());
+    bool ok = presets_save(doc);
+    req->send(ok ? 200 : 500, "application/json",
+              ok ? "{\"ok\":true}" : "{\"error\":\"sd write\"}");
+}
+
+static void api_seq_presets_delete(AsyncWebServerRequest *req, JsonVariant &body) {
+    const char *name = body["name"] | (const char*)nullptr;
+    if (!name || strlen(name) == 0) {
+        req->send(400, "application/json", "{\"error\":\"name missing\"}");
+        return;
+    }
+    JsonDocument doc;
+    presets_load(doc);
+    doc.remove(name);
+    Serial.printf("[PRESETS] DELETE '%s'\n", name);
+    bool ok = presets_save(doc);
+    req->send(ok ? 200 : 500, "application/json",
+              ok ? "{\"ok\":true}" : "{\"error\":\"sd write\"}");
+}
+
 // ── WiFi-API ─────────────────────────────────────────────────
 
 // WiFi-Credentials (RAM, geladen aus NVS)
@@ -594,7 +673,22 @@ static void register_routes() {
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/datalog/delete_all",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_datalog_delete_all(r, b); }));
 
-    // Sequencer
+    // Sequencer – Presets
+    s_server.on("/api/preset-list", HTTP_GET, api_seq_presets_get);
+    {
+        auto *h = new AsyncCallbackJsonWebHandler("/api/preset-save",
+            [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_presets_save(r, b); });
+        h->setMethod(HTTP_POST);
+        h->setMaxContentLength(4096);
+        s_server.addHandler(h);
+    }
+    {
+        auto *h = new AsyncCallbackJsonWebHandler("/api/preset-del",
+            [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_presets_delete(r, b); });
+        h->setMethod(HTTP_POST);
+        h->setMaxContentLength(4096);
+        s_server.addHandler(h);
+    }
     s_server.on("/api/sequence",       HTTP_GET,  api_seq_get);
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/start",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_start(r, b); }));

@@ -234,6 +234,10 @@ Zwischen den Sequenzen:
 | Starten                | Startet die gesamte Messreihe von Sequenz 1           |
 | Stoppen                | Bricht die laufende Messreihe ab, stoppt Motor + Heizung |
 | Alle löschen           | Entfernt alle Sequenzen aus der Tabelle               |
+| Preset-Dropdown        | Dropdown zum Laden einer gespeicherten Messreihe (localStorage) |
+| Preset-Name-Eingabe    | Textfeld zur Benennung einer Messreihe                |
+| Messreihe speichern    | Speichert aktuelle Sequenzen als benanntes Preset in localStorage |
+| Preset löschen (🗑)    | Löscht das ausgewählte Preset aus localStorage        |
 
 #### Status-Indikatoren
 
@@ -667,7 +671,7 @@ Im STA-Modus (eigenes WLAN) unter `http://esp32.local` (via mDNS).
 - [ ] OTA-Update über Web-UI? (Firmware-Upload via Browser)
 - [ ] Authentifizierung: Soll das Web-UI passwortgeschützt sein?
 - [ ] WebSocket-Reconnect-Strategie und Fehlerhandling im Frontend
-- [ ] Sequencer: Soll man Messreihen als Preset speichern und laden können?
+- [x] Sequencer: Messreihen als Preset speichern und laden (via localStorage im Browser)
 - [ ] Sequencer: Soll eine „Warm-up"-Phase vor der ersten Sequenz automatisch ablaufen?
 - [ ] Responsive Design für Mobilgeräte (Tablet im Labor)?
 - [ ] Lokalisierung: Nur Deutsch oder auch Englisch?
