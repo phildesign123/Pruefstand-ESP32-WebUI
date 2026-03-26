@@ -673,6 +673,7 @@ async function refreshWifi() {
   const d = await api('GET', '/api/wifi/status');
   if (!d) return;
   document.getElementById('wifi-mac').textContent = d.mac;
+  document.getElementById('wifi-mdns').textContent = 'http://pruefstand.local';
   document.getElementById('wifi-mode').textContent = d.mode;
 
   const staBadge = document.getElementById('wifi-sta-status');

@@ -101,8 +101,8 @@
 #define WEBUI_PORT              80
 #define WEBUI_WS_PATH           "/ws"
 #define WEBUI_WS_INTERVAL_MS    100    // 10 Hz
-#define WIFI_AP_SSID            "ESP32-Steuerung"
-#define WIFI_AP_PASSWORD        "12345678"
+#define WIFI_AP_SSID            "Extruder-Pruefstand"
+#define WIFI_AP_PASSWORD        "impt2026"
 #define WIFI_AP_IP              "192.168.4.1"
 #define WIFI_AP_CHANNEL         6          // Fester Kanal (1, 6 oder 11 = störungsarm)
 #define WIFI_AP_MAX_CONN        2          // Max. gleichzeitige Clients (spart RAM)
