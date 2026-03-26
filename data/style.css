@@ -13,8 +13,8 @@
   --warn: #f59e0b;
   --warn-glow: rgba(245,158,11,0.25);
 
-  --bg: #c8d0dc;
-  --bg-gradient: linear-gradient(135deg, #b4bdd4 0%, #c8d0dc 40%, #bdd4cc 100%);
+  --bg: #e0e7ff;
+  --bg-gradient: linear-gradient(135deg, #e0e7ff 0%, #fce7f3 50%, #dbeafe 100%);
   --surface: rgba(255,255,255,0.7);
   --card: rgba(255,255,255,0.75);
   --card-hover: rgba(255,255,255,0.9);
@@ -36,8 +36,8 @@
 
 /* ═══════ 2. Dark Mode ═══════ */
 [data-theme="dark"] {
-  --bg: #0c0f1a;
-  --bg-gradient: linear-gradient(135deg, #0c0f1a 0%, #111827 50%, #0c1a1a 100%);
+  --bg: #0f172a;
+  --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
   --surface: rgba(15,20,35,0.75);
   --card: rgba(30,35,55,0.6);
   --card-hover: rgba(40,45,70,0.7);
@@ -154,7 +154,7 @@ main {
   display: flex;
   justify-content: center;
 }
-.page { max-width: 1200px; width: 100%; display: none; }
+.page { max-width: 1500px; width: 100%; display: none; }
 .page.active { display: block; animation: slideUp 0.35s var(--ease); }
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(16px); }
@@ -162,6 +162,7 @@ main {
 }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 
 /* ═══════ 3. Glasmorphism Cards ═══════ */
 .card, .section {
@@ -452,6 +453,10 @@ tfoot td input { padding-left: 8px; }
 /* ═══════ 7. Responsive ═══════ */
 @media (max-width: 900px) {
   .grid3 { grid-template-columns: 1fr; }
+  .grid4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 500px) {
+  .grid4 { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
   .grid2 { grid-template-columns: 1fr; }

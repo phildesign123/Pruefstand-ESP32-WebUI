@@ -42,11 +42,13 @@ static void ws_push_task(void *arg) {
         if (s_ws.count() == 0) continue;
 
         // Kompaktes JSON zusammenstellen
-        char buf[256];
+        const char *dl_states[] = {"idle","recording","paused","error","stopping"};
+        char buf[300];
         snprintf(buf, sizeof(buf),
             "{\"t\":%lu,\"temp\":%.2f,\"temp_target\":%.2f,\"duty\":%.3f,"
             "\"weight\":%.4f,\"speed\":%.2f,\"motor\":%d,"
-            "\"seq\":%d,\"seq_state\":\"%s\",\"seq_remain\":%.1f}",
+            "\"seq\":%d,\"seq_state\":\"%s\",\"seq_remain\":%.1f,"
+            "\"dl_state\":\"%s\"}",
             (unsigned long)millis(),
             hotend_get_temperature(),
             hotend_get_target(),
@@ -56,7 +58,8 @@ static void ws_push_task(void *arg) {
             motor_is_moving() ? 1 : 0,
             sequencer_get_active_index(),
             sequencer_state_string(),
-            sequencer_get_remaining_s());
+            sequencer_get_remaining_s(),
+            dl_states[(int)datalog_get_state()]);
 
         // Nur senden wenn kein Client eine volle Queue hat
         // Verhindert "Too many messages queued" → Connection-Drop

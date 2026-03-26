@@ -588,6 +588,38 @@ async function deleteAllFiles() {
   toast('Alle Dateien gelöscht.'); refreshFiles();
 }
 
+// ── Dashboard Aufzeichnung (Karte) ───────────────────────────
+async function recStartDash() {
+  const name = document.getElementById('rec-name-dash').value.trim();
+  const body = { interval_ms: 100 };
+  if (name) body.filename = name;
+  const r = await api('POST', '/api/datalog/start', body);
+  if (r && r.ok) toast('Aufzeichnung gestartet.');
+  else toast(r?.error || 'Start fehlgeschlagen!');
+  refreshRecDash();
+  refreshRec();
+}
+
+async function recStopDash() {
+  await api('POST', '/api/datalog/stop');
+  toast('Aufzeichnung gestoppt.');
+  refreshRecDash();
+  setTimeout(refreshRec, 3000);
+}
+
+async function refreshRecDash() {
+  const ls = await api('GET', '/api/datalog/status');
+  const b = document.getElementById('rec-state-dash');
+  if (!b || !ls) return;
+  if (ls.state === 'recording') {
+    b.innerHTML = '<span class="rec-dot"></span>recording';
+    b.className = 'badge ok';
+  } else {
+    b.textContent = ls.state === 'idle' ? 'ready to record' : ls.state;
+    b.className = 'badge secondary';
+  }
+}
+
 // ── Dashboard SD-Aufzeichnung ─────────────────────────────────
 
 async function recStart() {
@@ -607,30 +639,10 @@ async function recStop() {
 }
 
 async function refreshRec() {
-  // SD-Info – automatisch mounten falls nötig
+  // SD mounten falls nötig
   let sd = await api('GET', '/api/datalog/sdinfo');
   if (sd && !sd.mounted) {
-    const m = await api('POST', '/api/datalog/mount');
-    if (m && m.ok) sd = await api('GET', '/api/datalog/sdinfo');
-  }
-  if (sd && sd.mounted) {
-    document.getElementById('rec-sd-free').textContent  = formatBytes(sd.free);
-    document.getElementById('rec-sd-total').textContent = formatBytes(sd.total);
-  } else {
-    document.getElementById('rec-sd-free').textContent  = '–';
-    document.getElementById('rec-sd-total').textContent = 'nicht erkannt';
-  }
-  // Status
-  const ls = await api('GET', '/api/datalog/status');
-  if (ls) {
-    const b = document.getElementById('rec-state');
-    if (ls.state === 'recording') {
-      b.innerHTML = '<span class="rec-dot"></span>recording';
-      b.className = 'badge ok';
-    } else {
-      b.textContent = ls.state;
-      b.className = 'badge secondary';
-    }
+    await api('POST', '/api/datalog/mount');
   }
   // Dateiliste
   const d = await api('GET', '/api/datalog/filelist');
@@ -752,4 +764,6 @@ window.addEventListener('DOMContentLoaded', () => {
   loadSequences();
   seqPresetsRefreshDropdown();
   refreshRec();
+  refreshRecDash();
+  setInterval(refreshRecDash, 1000);
 });
