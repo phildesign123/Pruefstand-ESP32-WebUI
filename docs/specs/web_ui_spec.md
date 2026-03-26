@@ -14,8 +14,9 @@ modernen Browser im lokalen Netzwerk erreichbar.
 
 Das UI gliedert sich in zwei Hauptbereiche, erreichbar über eine Navigationsleiste:
 
-1. **Dashboard** — Prozessüberwachung, Motorsteuerung, Live-Diagramm, Messreihen
-2. **Einstellungen** — Kalibrierung (Wägezelle, E-Steps), TMC2208-Konfiguration
+1. **Dashboard** — Prozessüberwachung (Temperatur, Motor, Kraft, Manuelle Aufzeichnung), Live-Diagramm, Messreihen, SD-Dateien
+2. **Einstellungen** — Kalibrierung (Wägezelle, E-Steps), TMC2208-Konfiguration, SD-Speicherinfo
+3. **WiFi** — WiFi-Konfiguration (STA/AP)
 
 ---
 
@@ -167,8 +168,10 @@ Sieben Buttons für Jog-Bewegungen in festen Distanzen:
 | `►►`   | +10 mm   | Forward    | `POST /api/motor/move_dist {speed, dist:10, fwd}` |
 
 - Die Geschwindigkeit wird über ein Eingabefeld eingestellt (Default: 3 mm/s).
-- Ein **STOP**-Button bricht die laufende Bewegung sofort ab (`POST /api/motor/stop`).
-- Buttons werden disabled, solange eine Bewegung läuft.
+- Ein **Start**-Button (grün) startet den Motor dauerhaft mit der eingegebenen Geschwindigkeit (`POST /api/motor/move {speed, duration_s: 3600}`).
+- Ein **STOP**-Button (rot) bricht die laufende Bewegung sofort ab (`POST /api/motor/stop`).
+- Beide Buttons sind gleich breit (100px).
+- Die aktuelle Geschwindigkeit wird als große Zahl mit `mm/s` daneben (nowrap) angezeigt.
 
 ### 3.5  Live-Diagramm
 
@@ -234,10 +237,10 @@ Zwischen den Sequenzen:
 | Starten                | Startet die gesamte Messreihe von Sequenz 1           |
 | Stoppen                | Bricht die laufende Messreihe ab, stoppt Motor + Heizung |
 | Alle löschen           | Entfernt alle Sequenzen aus der Tabelle               |
-| Preset-Dropdown        | Dropdown zum Laden einer gespeicherten Messreihe (localStorage) |
+| Preset-Dropdown        | Dropdown zum Laden einer gespeicherten Messreihe (SD-Karte) |
 | Preset-Name-Eingabe    | Textfeld zur Benennung einer Messreihe                |
-| Messreihe speichern    | Speichert aktuelle Sequenzen als benanntes Preset in localStorage |
-| Preset löschen (🗑)    | Löscht das ausgewählte Preset aus localStorage        |
+| Messreihe speichern    | Speichert aktuelle Sequenzen als benanntes Preset auf SD-Karte (`/presets.json`) |
+| Preset löschen (🗑)    | Löscht das ausgewählte Preset von der SD-Karte        |
 
 #### Status-Indikatoren
 
@@ -248,6 +251,49 @@ Zwischen den Sequenzen:
 | `►`    | Aktiv (Motor extrudiert, Daten werden geloggt) |
 | `✓`    | Abgeschlossen                                |
 | `✗`    | Fehler (Thermal Runaway, Timeout, etc.)      |
+
+### 3.7  Manuelle Aufzeichnung (Dashboard-Karte)
+
+Vierte Karte im Dashboard-Grid neben Temperatur, Motor und Kraft.
+
+| Element           | Beschreibung                                                     |
+| ----------------- | ---------------------------------------------------------------- |
+| Status-Badge      | Zeigt `ready to record` oder blinkendes `recording` (rot, 1 Hz Polling) |
+| Dateiname-Eingabe | Optionaler Name für die Aufzeichnungsdatei                       |
+| Start-Button      | Startet Aufzeichnung (`POST /api/datalog/start {interval_ms: 100}`) |
+| Stop-Button       | Stoppt Aufzeichnung (`POST /api/datalog/stop`)                   |
+
+Der Status wird jede Sekunde via `GET /api/datalog/status` aktualisiert und zeigt
+den Aufzeichnungsstatus aller Quellen (manuell, Messreihe, etc.).
+
+### 3.8  SD-Aufzeichnung (Dateiliste)
+
+Zeigt die auf der SD-Karte gespeicherten CSV-Dateien.
+
+| Element              | Beschreibung                                          |
+| -------------------- | ----------------------------------------------------- |
+| Dateiliste           | Alle `.csv`-Dateien mit Größe, Download- und Lösch-Button |
+| Alle Dateien löschen | Löscht alle Dateien auf der SD-Karte                  |
+
+Die Dateiliste wird beim Seitenladen und nach Start/Stop einer Aufzeichnung aktualisiert.
+
+### 3.9  Layout
+
+Das Dashboard verwendet ein 4-Spalten-Grid (`grid4`) für die oberen Karten
+(Temperatur, Motor, Kraft, Manuelle Aufzeichnung) mit `max-width: 1500px`.
+
+| Breakpoint  | Layout                |
+| ----------- | --------------------- |
+| > 900px     | 4 Spalten             |
+| 500–900px   | 2 Spalten             |
+| < 500px     | 1 Spalte              |
+
+### 3.10  Design / Hintergrund
+
+| Modus | Farbverlauf (135°)                                      |
+| ----- | ------------------------------------------------------- |
+| Light | Lavendel (#e0e7ff) → Rosa (#fce7f3) → Hellblau (#dbeafe) |
+| Dark  | Dunkelblau (#0f172a) → Indigo (#1e1b4b) → Dunkelblau (#0f172a) |
 
 ---
 
@@ -410,6 +456,8 @@ JSON-Nachrichten im 100-ms-Takt:
 | `motor`       | uint8  | Motor aktiv (0/1)                         |
 | `seq`         | int    | Aktive Sequenz-Nummer (−1 = keine)        |
 | `seq_state`   | string | `idle`, `heating`, `running`, `done`, `error` |
+| `seq_remain`  | float  | Verbleibende Sekunden der aktiven Sequenz  |
+| `dl_state`    | string | Datalog-Status: `idle`, `recording`, `paused`, `error`, `stopping` |
 
 ### 5.3  Client → Server (Events)
 
@@ -556,6 +604,18 @@ automatisch auf das höhere Intervall umgeschaltet.
 | POST    | `/api/sequence/start`     | Messreihe starten         | —                                    |
 | POST    | `/api/sequence/stop`      | Messreihe abbrechen       | —                                    |
 
+### 7.6  Messreihen-Presets (SD-Karte)
+
+| Methode | Endpunkt              | Beschreibung              | Body                                       |
+| ------- | --------------------- | ------------------------- | ------------------------------------------ |
+| GET     | `/api/preset-list`    | Alle Presets laden        | —                                          |
+| POST    | `/api/preset-save`    | Preset speichern          | `{name, sequences: [{temp_c, speed_mm_s, duration_s}]}` |
+| POST    | `/api/preset-del`     | Preset löschen            | `{name}`                                   |
+
+Presets werden als `/presets.json` auf der SD-Karte gespeichert (max. 8 KB).
+Die Datei-Operationen sind über `datalog_read_raw_file()` / `datalog_write_raw_file()`
+SPI-Mutex-geschützt.
+
 ---
 
 ## 8  Software-Architektur
@@ -671,7 +731,7 @@ Im STA-Modus (eigenes WLAN) unter `http://esp32.local` (via mDNS).
 - [ ] OTA-Update über Web-UI? (Firmware-Upload via Browser)
 - [ ] Authentifizierung: Soll das Web-UI passwortgeschützt sein?
 - [ ] WebSocket-Reconnect-Strategie und Fehlerhandling im Frontend
-- [x] Sequencer: Messreihen als Preset speichern und laden (via localStorage im Browser)
+- [x] Sequencer: Messreihen als Preset speichern und laden (SD-Karte, `/presets.json`)
 - [ ] Sequencer: Soll eine „Warm-up"-Phase vor der ersten Sequenz automatisch ablaufen?
 - [ ] Responsive Design für Mobilgeräte (Tablet im Labor)?
 - [ ] Lokalisierung: Nur Deutsch oder auch Englisch?
