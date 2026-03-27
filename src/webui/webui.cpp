@@ -15,6 +15,7 @@
 #include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <sys/time.h>
 
 static Preferences s_prefs;
 
@@ -25,6 +26,7 @@ static Preferences s_prefs;
 
 static AsyncWebServer  s_server(WEBUI_PORT);
 static AsyncWebSocket  s_ws(WEBUI_WS_PATH);
+static volatile time_t s_pending_epoch = 0;  // Browser-Zeit, wird im Push-Task gesetzt
 
 // ── WebSocket-Push-Task (10 Hz) ──────────────────────────────
 
@@ -32,6 +34,14 @@ static void ws_push_task(void *arg) {
     uint8_t cleanup_cnt = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(WEBUI_WS_INTERVAL_MS));
+
+        // Browser-Zeit setzen (verzögert aus async-Kontext)
+        if (s_pending_epoch) {
+            struct timeval tv = { .tv_sec = (time_t)s_pending_epoch, .tv_usec = 0 };
+            settimeofday(&tv, nullptr);
+            Serial.printf("[TIME] Browser-Zeit gesetzt: %lu\n", (unsigned long)s_pending_epoch);
+            s_pending_epoch = 0;
+        }
 
         // Alle 2 Sekunden tote Clients aufräumen
         if (++cleanup_cnt >= 20) {
@@ -295,13 +305,37 @@ static void api_datalog_status(AsyncWebServerRequest *req) {
     req->send(200, "application/json", buf);
 }
 
+// Verzögerter datalog_start (außerhalb async_tcp-Kontext)
+static volatile bool     s_dl_start_pending = false;
+static uint32_t          s_dl_start_iv      = 0;
+static char              s_dl_start_fname[64];
+static TaskHandle_t      s_dl_start_task    = nullptr;
+
+static void datalog_start_worker(void *) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        bool ok = datalog_start(s_dl_start_iv,
+                                s_dl_start_fname[0] ? s_dl_start_fname : nullptr);
+        Serial.printf("[WEBUI] datalog_start(%lu, %s) => %s\n",
+                      (unsigned long)s_dl_start_iv,
+                      s_dl_start_fname[0] ? s_dl_start_fname : "auto",
+                      ok ? "OK" : "FAIL");
+        s_dl_start_pending = false;
+    }
+}
+
 static void api_datalog_start(AsyncWebServerRequest *req, JsonVariant &body) {
-    uint32_t iv = body["interval_ms"] | (uint32_t)DATALOG_INTERVAL_MS;
+    if (s_dl_start_pending) {
+        req->send(409, "application/json", "{\"error\":\"start already pending\"}");
+        return;
+    }
+    s_dl_start_iv = body["interval_ms"] | (uint32_t)DATALOG_INTERVAL_MS;
     const char *fname = body["filename"] | (const char*)nullptr;
-    bool ok = datalog_start(iv, fname);
-    Serial.printf("[WEBUI] datalog_start(%lu, %s) => %s\n",
-                  (unsigned long)iv, fname ? fname : "auto", ok ? "OK" : "FAIL");
-    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"start failed – SD mounted?\"}");
+    if (fname) snprintf(s_dl_start_fname, sizeof(s_dl_start_fname), "%s", fname);
+    else s_dl_start_fname[0] = '\0';
+    s_dl_start_pending = true;
+    xTaskNotifyGive(s_dl_start_task);
+    req->send(200, "application/json", "{\"ok\":true}");
 }
 
 static void api_datalog_stop(AsyncWebServerRequest *req) {
@@ -702,6 +736,19 @@ static void register_routes() {
     s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/sequence/delete",
         [](AsyncWebServerRequest *r, JsonVariant &b){ api_seq_delete(r, b); }));
 
+    // Browser-Zeit setzen (Fallback wenn kein NTP verfügbar)
+    // Nur Epoch merken – settimeofday() wird im ws_push_task ausgeführt
+    s_server.addHandler(new AsyncCallbackJsonWebHandler("/api/time/set",
+        [](AsyncWebServerRequest *r, JsonVariant &b){
+            time_t epoch = (time_t)(b["epoch"].as<unsigned long>());
+            if (epoch > 1600000000UL) {
+                s_pending_epoch = epoch;
+                r->send(200, "application/json", "{\"ok\":true}");
+            } else {
+                r->send(400, "application/json", "{\"error\":\"invalid epoch\"}");
+            }
+        }));
+
     // WiFi
     s_server.on("/api/wifi/scan", HTTP_GET, api_wifi_scan);
     s_server.on("/api/wifi/status", HTTP_GET, api_wifi_status);
@@ -787,6 +834,10 @@ void webui_init() {
     // WebSocket-Push-Task starten
     xTaskCreatePinnedToCore(ws_push_task, "ws_push", TASK_STACK_WS_PUSH,
                             nullptr, TASK_PRIO_WS_PUSH, nullptr, CORE_WIFI);
+
+    // Datalog-Start-Worker (führt datalog_start außerhalb async_tcp aus)
+    xTaskCreatePinnedToCore(datalog_start_worker, "dl_start", 4096,
+                            nullptr, 3, &s_dl_start_task, CORE_REALTIME);
 }
 
 void webui_notify_clients(const char *json) {

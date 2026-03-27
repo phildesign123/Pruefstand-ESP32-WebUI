@@ -387,6 +387,11 @@ esp_err_t datalog_init(spi_host_device_t spi_host,
 /**
  * @brief Aufzeichnung starten (neue CSV-Datei anlegen)
  * @param interval_ms  Log-Intervall in ms (0 = Default aus Kconfig)
+ *
+ * @warning Darf NICHT aus dem async_tcp-Kontext (HTTP-/WS-Handler)
+ *          aufgerufen werden — SPI-Mutex + SD-I/O blockieren den
+ *          async_tcp-Task und lösen den Watchdog aus.
+ *          Stattdessen in eigenem FreeRTOS-Task ausführen.
  */
 esp_err_t datalog_start(uint32_t interval_ms);
 

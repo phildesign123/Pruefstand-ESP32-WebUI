@@ -527,6 +527,12 @@ letzten Sequenz — auch während der Aufheizphasen zwischen den Sequenzen.
 
 So sind die Temperaturrampen zwischen den Sequenzen ebenfalls dokumentiert.
 
+> **Wichtig:** `datalog_start()` darf **nicht** im `async_tcp`-Kontext
+> (HTTP-Handler) aufgerufen werden, da die SPI-Mutex-Wartezeit und
+> SD-Kartenoperationen den Task-Watchdog auslösen können.
+> Stattdessen wird der Aufruf im `sequencer_task` (Core 1) ausgeführt
+> bzw. bei manueller Aufzeichnung in einem eigenen Kurzzeit-Task.
+
 ### 6.4  Konfigurierbare Parameter
 
 | Parameter               | Default | Kconfig-Key                    |

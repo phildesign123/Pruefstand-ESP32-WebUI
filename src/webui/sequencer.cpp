@@ -17,6 +17,8 @@ static volatile SeqState s_state     = SEQ_IDLE;
 static volatile bool s_stop_req      = false;
 static volatile float s_remaining_s  = 0.0f;
 static volatile bool s_move_queued   = false;  // Move bereits in Motor-Queue
+static volatile bool s_datalog_pending = false; // datalog_start() im Task ausführen
+static char          s_start_filename[64] = {0};
 static portMUX_TYPE  s_mux           = portMUX_INITIALIZER_UNLOCKED;
 
 static void sequencer_task(void *arg) {
@@ -24,6 +26,13 @@ static void sequencer_task(void *arg) {
         if (s_state == SEQ_IDLE || s_stop_req) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
+        }
+
+        // datalog_start() hier im eigenen Task statt im async_tcp-Kontext
+        if (s_datalog_pending) {
+            s_datalog_pending = false;
+            datalog_start(SEQ_LOG_INTERVAL_MS,
+                          s_start_filename[0] ? s_start_filename : nullptr);
         }
 
         int idx;
@@ -206,7 +215,14 @@ bool sequencer_start(const char *filename) {
     pos += snprintf(preamble + pos, sizeof(preamble) - pos, "#\n");
     datalog_set_preamble(preamble);
 
-    datalog_start(SEQ_LOG_INTERVAL_MS, filename);
+    // Dateiname merken – datalog_start() wird im sequencer_task ausgeführt,
+    // nicht hier im async_tcp-Kontext (Watchdog-Problem)
+    if (filename && filename[0])
+        snprintf(s_start_filename, sizeof(s_start_filename), "%s", filename);
+    else
+        s_start_filename[0] = '\0';
+    s_datalog_pending = true;
+
     return true;
 }
 

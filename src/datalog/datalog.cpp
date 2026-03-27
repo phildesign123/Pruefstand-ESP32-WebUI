@@ -257,18 +257,22 @@ static void writer_task(void *arg) {
         if (xQueueReceive(s_sample_queue, &sample, pdMS_TO_TICKS(1000)) != pdTRUE) {
             // Timeout — Restpuffer schreiben wenn Aufzeichnung gestoppt
             if (s_state != DATALOG_RECORDING && s_buf_pos > 0) {
-                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-                if (ensure_log_file_open_locked()) {
-                    s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
-                    s_log_file.flush();
-                    s_buf_pos = 0;
+                bool got = !s_spi_mutex || xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500)) == pdTRUE;
+                if (got) {
+                    if (ensure_log_file_open_locked()) {
+                        s_log_file.write((const uint8_t*)s_buf, s_buf_pos);
+                        s_log_file.flush();
+                        s_buf_pos = 0;
+                    }
+                    close_log_file_locked();
+                    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
                 }
-                close_log_file_locked();
-                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
             } else if (s_state != DATALOG_RECORDING) {
-                if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-                close_log_file_locked();
-                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+                bool got = !s_spi_mutex || xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500)) == pdTRUE;
+                if (got) {
+                    close_log_file_locked();
+                    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+                }
             }
             continue;
         }
@@ -338,14 +342,16 @@ static void writer_task(void *arg) {
 
         // Datei-Rotation prüfen
         if (bytes_since_rot >= (size_t)DATALOG_MAX_FILE_SIZE_MB * 1024 * 1024) {
-            if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-            char new_name[72];
-            make_filename(new_name, sizeof(new_name));
-            strncpy(s_filename, new_name, sizeof(s_filename));
-            close_log_file_locked();
-            s_log_file = SD.open(s_filename, FILE_WRITE);
-            if (s_log_file) { s_log_file.println(CSV_HEADER); s_log_file.close(); }
-            if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            bool got = !s_spi_mutex || xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500)) == pdTRUE;
+            if (got) {
+                char new_name[72];
+                make_filename(new_name, sizeof(new_name));
+                strncpy(s_filename, new_name, sizeof(s_filename));
+                close_log_file_locked();
+                s_log_file = SD.open(s_filename, FILE_WRITE);
+                if (s_log_file) { s_log_file.println(CSV_HEADER); s_log_file.close(); }
+                if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+            }
             bytes_since_rot = 0;
         }
     }
@@ -449,9 +455,11 @@ bool datalog_start(uint32_t interval_ms, const char *filename) {
 bool datalog_stop() {
     s_state = DATALOG_STOPPING;
     vTaskDelay(pdMS_TO_TICKS(1500));  // Writer-Task hat 1s Timeout + Flush-Zeit
-    if (s_spi_mutex) xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500));
-    close_log_file_locked();
-    if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    bool got = !s_spi_mutex || xSemaphoreTake(s_spi_mutex, pdMS_TO_TICKS(500)) == pdTRUE;
+    if (got) {
+        close_log_file_locked();
+        if (s_spi_mutex) xSemaphoreGive(s_spi_mutex);
+    }
     s_state = DATALOG_IDLE;
     Serial.println("[DATALOG] Aufzeichnung gestoppt.");
     return true;

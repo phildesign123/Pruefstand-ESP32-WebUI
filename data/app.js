@@ -58,6 +58,12 @@ function wsConnect() {
   ws.onopen = () => {
     document.getElementById('ws-dot').classList.add('connected');
     clearTimeout(wsReconnectTimer);
+    // Browser-Zeit an ESP32 senden (Fallback wenn kein NTP)
+    fetch('/api/time/set', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({epoch: Math.floor(Date.now()/1000)})
+    }).catch(()=>{});
   };
 
   ws.onclose = () => {
