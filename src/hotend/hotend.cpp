@@ -6,6 +6,7 @@
 #include "safety.h"
 #include "autotune.h"
 #include "../config.h"
+#include "../load_cell/load_cell.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_task_wdt.h"
@@ -26,6 +27,7 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void emergency_stop(SafetyFault fault) {
     set_heater_pwm(0);
+    load_cell_set_compensation(0);
     ledcWrite(FAN_PIN, 255);   // Lüfter voll an zum Abkühlen
     s_pid.reset();
     portENTER_CRITICAL(&s_mux);
@@ -67,9 +69,11 @@ void hotend_task(void *arg) {
                     emergency_stop(sf);
                 } else {
                     set_heater_pwm(pwm);
+                    float duty = (float)output / (float)PID_MAX;
                     portENTER_CRITICAL(&s_mux);
-                    s_duty_frac = (float)output / (float)PID_MAX;
+                    s_duty_frac = duty;
                     portEXIT_CRITICAL(&s_mux);
+                    load_cell_set_compensation((int32_t)(duty * LOAD_CELL_HEATER_COMP));
                 }
 
                 update_fan(temp);
@@ -105,6 +109,7 @@ bool hotend_set_target(float temp_c) {
     if (temp_c == 0.0f) {
         s_pid.reset();
         set_heater_pwm(0);
+        load_cell_set_compensation(0);
     }
     return true;
 }

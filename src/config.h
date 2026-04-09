@@ -15,7 +15,7 @@
 // ── Heizer ──────────────────────────────────────────────────
 #define HEATER_PIN          25
 #define PWM_CHANNEL         0
-#define PWM_FREQ            8          // Hz (langsames Soft-PWM wie Marlin)
+#define PWM_FREQ            1000       // Hz (schnell → EMI oberhalb NAU7802-Nyquist)
 #define PWM_RESOLUTION      7          // 7-Bit → 0–127
 
 // ── Lüfter ──────────────────────────────────────────────────
@@ -88,6 +88,7 @@
 #define LOAD_CELL_AVG_SIZE      10
 #define LOAD_CELL_TARE_SAMPLES  80
 #define LOAD_CELL_CAL_SAMPLES   80
+#define LOAD_CELL_HEATER_COMP   1100       // Raw-Counts Kompensation bei Duty=1.0 (Heater-Einstreuung)
 
 // ── Datenlogger / SD-Karte ───────────────────────────────────
 #define DATALOG_INTERVAL_MS      100           // 10 Hz (Gewicht)

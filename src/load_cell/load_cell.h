@@ -21,5 +21,9 @@ int32_t load_cell_get_raw();
 // Kalibrierung vorhanden?
 bool load_cell_is_calibrated();
 
+// Externe Kompensation setzen (z.B. Heater-Einstreuung)
+// raw_offset wird zum gefilterten Rohwert addiert
+void load_cell_set_compensation(int32_t raw_offset);
+
 // Modul stoppen
 void load_cell_deinit();

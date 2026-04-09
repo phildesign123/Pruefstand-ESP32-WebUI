@@ -436,7 +436,33 @@ die Kopplung erfolgt ausschließlich über die öffentliche API und Events.
 
 ---
 
-## 10  Offene Punkte / TODOs
+## 10  Bekannte Probleme und Lösungen
+
+### 10.1  Kraftoffset bei Heater-Einschaltung (gelöst)
+
+**Problem:** Beim Einschalten des Hotend-Heaters fiel der Kraftwert der Wägezelle
+um ca. 0,2 N ab. Der Offset trat systematisch auf und war reproduzierbar.
+
+**Ursache:** Die Heater-PWM-Frequenz (8 Hz) lag unterhalb der Nyquist-Frequenz des
+NAU7802 (40 Hz bei 80 SPS). Die Stromtransienten des Heaters erzeugten einen
+Ground-Shift/Spannungsabfall, der als quasi-DC-Offset durch den Dezimationsfilter
+des Sigma-Delta-ADC durchgelassen wurde.
+
+**Lösung (zweistufig):**
+
+1. **PWM-Frequenz** von 8 Hz auf 1000 Hz erhöht (`PWM_FREQ` in `config.h`).
+   Bei 1000 Hz liegt die Störfrequenz weit oberhalb der Nyquist-Frequenz des NAU7802
+   (40 Hz) und wird vom internen Dezimationsfilter teilweise unterdrückt.
+
+2. **Software-Kompensation** des verbleibenden DC-Offsets (Ground-Shift durch Heizstrom).
+   Der Hotend-PID-Task setzt per `load_cell_set_compensation()` einen Raw-Offset
+   proportional zum aktuellen Heater-Duty. Konfiguration: `LOAD_CELL_HEATER_COMP = 1100`
+   Raw-Counts bei Duty=1.0 (in `config.h`). Reduziert den Offset von ~0,08 N auf <0,02 N
+   (innerhalb des Messrauschens).
+
+---
+
+## 11  Offene Punkte / TODOs
 
 - [ ] Abgleich mit bestehendem Code aus dem Marlin-ESP32-Projekt
 - [ ] Verstärkung (Gain) je nach Wägezellen-Typ anpassen (128× ggf. zu hoch/niedrig)

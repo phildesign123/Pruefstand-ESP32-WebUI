@@ -26,6 +26,7 @@ static volatile float    s_weight_g     = 0.0f;
 static int32_t  s_tare_offset   = 0;
 static float    s_cal_factor    = 1000.0f;  // Default (unkalibriert)
 static bool     s_calibrated    = false;
+static volatile int32_t s_ext_compensation = 0;  // Heater-Kompensation
 
 static Preferences s_prefs;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -125,7 +126,7 @@ static void load_cell_task(void *arg) {
         int32_t median_val = s_median.get();
 
         s_avg.push(median_val);
-        int32_t avg_val = s_avg.get();
+        int32_t avg_val = s_avg.get() + s_ext_compensation;
 
         float weight = (float)(avg_val - s_tare_offset) / s_cal_factor;
 
@@ -233,6 +234,10 @@ bool load_cell_calibrate(float known_weight_g) {
 float   load_cell_get_weight_g()  { return s_weight_g; }
 int32_t load_cell_get_raw()       { return s_filtered_raw; }
 bool    load_cell_is_calibrated() { return s_calibrated; }
+
+void load_cell_set_compensation(int32_t raw_offset) {
+    s_ext_compensation = raw_offset;
+}
 
 void load_cell_deinit() {
     if (s_task_handle) vTaskDelete(s_task_handle);

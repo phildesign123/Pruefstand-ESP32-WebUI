@@ -99,9 +99,15 @@ src/
 
 ```cpp
 #define PWM_CHANNEL    0
-#define PWM_FREQ       8        // Hz
+#define PWM_FREQ       1000     // Hz (schnell → EMI oberhalb NAU7802-Nyquist)
 #define PWM_RESOLUTION 7        // 7-Bit = 0–127
 ```
+
+> **Hinweis:** Die PWM-Frequenz wurde von 8 Hz auf 1000 Hz erhöht. Bei 8 Hz lag die
+> Heater-Schaltfrequenz unterhalb der Nyquist-Frequenz des NAU7802-ADC (40 Hz) und
+> erzeugte einen systematischen Kraftoffset. Zusätzlich kompensiert das Wägezellen-Modul
+> den verbleibenden DC-Offset (Ground-Shift durch Heizstrom) per Software-Kompensation
+> proportional zum Heater-Duty (`LOAD_CELL_HEATER_COMP` in `config.h`).
 
 ### Standard PID-Werte
 
