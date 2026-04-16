@@ -99,6 +99,10 @@ static void on_ws_message(AsyncWebSocketClient *client,
     if (strcmp(cmd, "set_target") == 0) {
         float v = doc["value"] | 0.0f;
         hotend_set_target(v);
+    } else if (strcmp(cmd, "fan_off_timed") == 0) {
+        uint32_t sec = doc["seconds"] | 20;
+        if (sec > 300) sec = 300;   // Sicherheitslimit: max. 5 min
+        hotend_fan_off_timed(sec * 1000);
     } else if (strcmp(cmd, "motor_jog") == 0) {
         float  dist  = doc["dist"]  | 1.0f;
         float  speed = doc["speed"] | 3.0f;

@@ -282,6 +282,10 @@ async function clearFault() {
   await api('POST', '/api/hotend/clear_fault');
   toast('Fault quittiert.');
 }
+function fanOffTimed(seconds) {
+  wsSend({ cmd: 'fan_off_timed', seconds });
+  toast(`Lüfter für ${seconds}s aus.`);
+}
 
 // ── Motor-Kommandos ───────────────────────────────────────────
 function jog(dist) {

@@ -25,6 +25,7 @@ bool    hotend_is_fan_auto();
 // Konfiguration
 void hotend_set_pid(float kp, float ki, float kd);
 void hotend_set_fan(uint8_t duty);  // 0 = Auto
+void hotend_fan_off_timed(uint32_t duration_ms);  // Lüfter für X ms aus, danach Auto
 
 // Fault-Management
 bool        hotend_has_fault();

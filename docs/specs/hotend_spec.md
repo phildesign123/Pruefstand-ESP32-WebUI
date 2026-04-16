@@ -180,12 +180,27 @@ ledcAttachPin(HEATER_PIN, PWM_CHANNEL);
 ### Funktionen
 
 ```cpp
-void    setup_fan();                     // LEDC Kanal 1 initialisieren
-void    update_fan(float current_temp);  // Temperaturabhängig regeln
-void    set_fan_override(uint8_t duty);  // Manueller Override (0 = auto)
-uint8_t get_fan_duty();                  // Aktuellen Duty-Wert zurückgeben
-bool    is_fan_auto();                   // true = automatischer Modus
+void    setup_fan();                             // LEDC Kanal 1 initialisieren
+void    update_fan(float current_temp);          // Temperaturabhängig regeln
+void    set_fan_override(uint8_t duty);          // Manueller Override (0 = auto)
+void    set_fan_off_timed(uint32_t duration_ms); // Lüfter für X ms aus, danach Auto
+uint8_t get_fan_duty();                          // Aktuellen Duty-Wert zurückgeben
+bool    is_fan_auto();                           // true = automatischer Modus
 ```
+
+### Zeitlicher Override (`set_fan_off_timed`)
+
+Schaltet den Lüfter für die angegebene Dauer (ms) komplett ab und wechselt
+anschließend automatisch zurück in den Automodus. `update_fan()` prüft das
+Ablaufdatum per `millis()` (rollover-sicher via signed-Vergleich) bei jedem
+PID-Zyklus. Ein nachfolgender manueller `set_fan_override()` hebt den
+zeitlichen Override auf.
+
+**Anwendungsfall:** Messungen, bei denen der Lüfter-Luftstrom kurzzeitig die
+Wägezelle beeinflusst (z.B. Tarierung mit heißem Hotend).
+
+**Aufruf aus WebUI:** WebSocket-Kommando `fan_off_timed` mit Feld `seconds`
+(max. 300 s); Wrapper `hotend_fan_off_timed(uint32_t duration_ms)`.
 
 ### Verhalten
 

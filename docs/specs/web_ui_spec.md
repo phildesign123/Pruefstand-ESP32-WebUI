@@ -465,10 +465,17 @@ Der Client kann über den WebSocket auch Befehle senden:
 
 ```json
 {"cmd": "set_target", "value": 210.0}
+{"cmd": "fan_off_timed", "seconds": 20}
 {"cmd": "motor_jog", "dist": 5.0, "dir": "fwd", "speed": 3.0}
 {"cmd": "motor_stop"}
 {"cmd": "tare"}
 ```
+
+Das Kommando `fan_off_timed` schaltet den Hotend-Lüfter für die angegebene
+Dauer (max. 300 s) komplett aus und kehrt danach automatisch in den
+Temperatur-Automodus zurück. Nützlich für kurzzeitige Messungen, bei denen
+der Luftstrom die Wägezelle stören würde. Button in der Temperatur-Karte
+(Dashboard): `Lüfter 20s AUS`.
 
 Diese werden alternativ zu den REST-Endpunkten akzeptiert.
 Für Aktionen, die eine Antwort erfordern (z.B. Kalibrierung),

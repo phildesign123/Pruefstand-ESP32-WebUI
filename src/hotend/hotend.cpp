@@ -134,6 +134,10 @@ void hotend_set_fan(uint8_t duty) {
     set_fan_override(duty);
 }
 
+void hotend_fan_off_timed(uint32_t duration_ms) {
+    set_fan_off_timed(duration_ms);
+}
+
 void hotend_clear_fault() {
     set_heater_pwm(0);
     s_pid.reset();
