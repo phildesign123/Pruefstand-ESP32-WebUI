@@ -29,9 +29,10 @@
 
 // ── PT100 / MAX31865 ─────────────────────────────────────────
 #define SENSOR_OHMS         100.0f
-#define CALIBRATION_OHMS    440.3f     // Individuell kalibrieren!
-#define SENSOR_WIRES        3
+#define CALIBRATION_OHMS    439.60f    // Kalibriert per Dekadenbox (100/150/200 Ω, 2026-04-20)
+#define SENSOR_WIRES        2
 #define SENSOR_OFFSET       0.1f
+#define SENSOR_R_OFFSET     -0.24f     // Fit-Intercept 0.26 − 0.50 Ω PT100-Kabel = −0.24 Ω
 
 // ── PID ──────────────────────────────────────────────────────
 #define PID_FUNCTIONAL_RANGE    10.0f

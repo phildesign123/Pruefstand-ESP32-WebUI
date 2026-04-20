@@ -20,6 +20,12 @@
 #include "hotend/heater.h"
 #include "hotend/fan.h"
 #include "hotend/safety.h"
+#include "hotend/sensor.h"
+
+// Stub: load_cell-Modul ist in diesem Test-Env nicht eingelinkt.
+// hotend.cpp ruft load_cell_set_compensation() für die Heater-Einstreuungs-
+// Kompensation. Im Hotend-Test ohne Wägezelle ist das ein No-Op.
+void load_cell_set_compensation(int32_t) {}
 
 static SPIClass vspi(VSPI);
 static SemaphoreHandle_t spi_mutex;
@@ -66,7 +72,8 @@ static TestResult test_sensor() {
     }
 
     r.passed = true;
-    snprintf(r.message, sizeof(r.message), "%.1f °C, kein Fault", temp);
+    snprintf(r.message, sizeof(r.message),
+             "%.1f °C (R=%.3f Ω), kein Fault", temp, sensor_get_resistance());
     return r;
 }
 
@@ -155,8 +162,8 @@ static TestResult test_pid_response() {
         // Fortschritt jede Sekunde ausgeben
         unsigned long elapsed = millis() - t_start;
         if (elapsed % 1000 < 200) {
-            Serial.printf("[TEST] pid_response: %.1f / 200.0 °C  (%lu s)\n",
-                          temp, elapsed / 1000);
+            Serial.printf("[TEST] pid_response: %.1f / 200.0 °C  R=%.3f Ω  (%lu s)\n",
+                          temp, sensor_get_resistance(), elapsed / 1000);
         }
         vTaskDelay(pdMS_TO_TICKS(200));
     }
@@ -178,25 +185,76 @@ static TestResult test_pid_response() {
     return r;
 }
 
+// ── Test 5: Rohwerte ──────────────────────────────────────────
+// Gibt über 5 s den 15-Bit-RTD-Rohwert, den daraus berechneten
+// Widerstand und die Temperatur auf Serial aus. Nützlich für
+// CALIBRATION_OHMS-Feinjustage und Sensor-Diagnose.
+static TestResult test_raw_rtd() {
+    TestResult r = {"raw_rtd", false, ""};
+
+    Serial.println("[TEST] raw_rtd: 5 s Rohwerte (raw | R | T)");
+    Serial.println("       ---------+----------+--------");
+
+    unsigned long t0 = millis();
+    uint16_t raw_min = 0xFFFF, raw_max = 0;
+    int samples = 0;
+
+    while (millis() - t0 < 5000) {
+        // hotend_task läuft parallel und aktualisiert die Messwerte
+        uint16_t raw   = sensor_get_raw_rtd();
+        float    ohm   = sensor_get_resistance();
+        float    temp  = hotend_get_temperature();
+
+        if (raw > 0) {
+            if (raw < raw_min) raw_min = raw;
+            if (raw > raw_max) raw_max = raw;
+            samples++;
+        }
+
+        Serial.printf("       %5u    | %7.3f Ω | %6.2f °C\n", raw, ohm, temp);
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+
+    if (hotend_has_fault()) {
+        snprintf(r.message, sizeof(r.message),
+                 "Sensor-Fault: %s", hotend_get_fault_string());
+        return r;
+    }
+
+    if (samples == 0) {
+        snprintf(r.message, sizeof(r.message),
+                 "Keine gültigen Rohwerte (raw=0) – Sensor prüfen");
+        return r;
+    }
+
+    r.passed = true;
+    snprintf(r.message, sizeof(r.message),
+             "%d Samples, raw=%u…%u (Δ=%u)",
+             samples, raw_min, raw_max, (uint16_t)(raw_max - raw_min));
+    return r;
+}
+
 // ── Alle Tests sequenziell ausführen ─────────────────────────
 static void run_all_tests() {
     Serial.println("\n=== HARDWARE TESTS ===");
 
-    TestResult results[4];
+    TestResult results[5];
     results[0] = test_sensor();
     results[1] = test_heater();
     results[2] = test_fan();
     results[3] = test_pid_response();
+    results[4] = test_raw_rtd();
 
     int passed = 0;
-    for (int i = 0; i < 4; i++) {
+    for (size_t i = 0; i < sizeof(results)/sizeof(results[0]); i++) {
         Serial.printf("[%s] %-16s — %s\n",
                       results[i].passed ? "PASS" : "FAIL",
                       results[i].name,
                       results[i].message);
         if (results[i].passed) passed++;
     }
-    Serial.printf("=== %d/4 TESTS BESTANDEN ===\n\n", passed);
+    Serial.printf("=== %d/%u TESTS BESTANDEN ===\n\n",
+                  passed, (unsigned)(sizeof(results)/sizeof(results[0])));
 }
 
 // ── Setup ─────────────────────────────────────────────────────
@@ -212,8 +270,8 @@ void setup() {
     delay(300);
 
     Serial.println("Bereit. Befehle:");
-    Serial.println("  T       – Alle 4 Tests ausführen");
-    Serial.println("  T1…T4   – Einzelnen Test (1=Sensor 2=Heizer 3=Lüfter 4=PID)");
+    Serial.println("  T       – Alle 5 Tests ausführen");
+    Serial.println("  T1…T5   – Einzelnen Test (1=Sensor 2=Heizer 3=Lüfter 4=PID 5=Rohwerte)");
     Serial.println("  S<temp> – Zieltemperatur setzen (S0 = AUS)");
     Serial.println("  F<duty> – Lüfter manuell 0–255 (F0 = Auto)");
     Serial.println("  R       – Fault reset");
@@ -228,8 +286,9 @@ void loop() {
     // Jede Sekunde automatisch Status auf Serial ausgeben
     if (millis() - s_last_status >= 1000) {
         s_last_status = millis();
-        Serial.printf("[HOTEND] T=%.1f / %.1f °C  Duty=%.0f%%  Fan=%d",
+        Serial.printf("[HOTEND] T=%.1f / %.1f °C  R=%.3f Ω  Duty=%.0f%%  Fan=%d",
                       hotend_get_temperature(), hotend_get_target(),
+                      sensor_get_resistance(),
                       hotend_get_duty() * 100.0f, hotend_get_fan_duty());
         if (hotend_has_fault())
             Serial.printf("  !! FAULT: %s !!", hotend_get_fault_string());
@@ -261,6 +320,9 @@ void loop() {
     } else if (cmd.equalsIgnoreCase("T4")) {
         TestResult r = test_pid_response();
         Serial.printf("[%s] pid_response — %s\n", r.passed ? "PASS" : "FAIL", r.message);
+    } else if (cmd.equalsIgnoreCase("T5")) {
+        TestResult r = test_raw_rtd();
+        Serial.printf("[%s] raw_rtd — %s\n", r.passed ? "PASS" : "FAIL", r.message);
     } else if (cmd.startsWith("S") || cmd.startsWith("s")) {
         float t = cmd.substring(1).toFloat();
         if (hotend_set_target(t))
@@ -275,16 +337,16 @@ void loop() {
         hotend_clear_fault();
         Serial.println("[CMD] Reset.");
     } else if (cmd.equalsIgnoreCase("status")) {
-        Serial.printf("[HOTEND] Ist=%.2f °C  Soll=%.1f °C  Duty=%.0f%%\n",
-                      hotend_get_temperature(), hotend_get_target(),
-                      hotend_get_duty() * 100.0f);
+        Serial.printf("[HOTEND] Ist=%.2f °C  R=%.3f Ω  Soll=%.1f °C  Duty=%.0f%%\n",
+                      hotend_get_temperature(), sensor_get_resistance(),
+                      hotend_get_target(), hotend_get_duty() * 100.0f);
         Serial.printf("         Fan=%d  AutoFan=%s  Fault=%s (%s)\n",
                       hotend_get_fan_duty(),
                       hotend_is_fan_auto() ? "ja" : "nein",
                       hotend_has_fault() ? "JA" : "nein",
                       hotend_get_fault_string());
     } else if (cmd.equalsIgnoreCase("help")) {
-        Serial.println("T/T1..T4  S<temp>  F<duty>  R  status  help");
+        Serial.println("T/T1..T5  S<temp>  F<duty>  R  status  help");
     } else {
         Serial.println("Unbekannt. 'help' für Übersicht.");
     }

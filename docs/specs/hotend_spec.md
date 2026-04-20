@@ -68,13 +68,27 @@ src/
 
 ```cpp
 #define SENSOR_OHMS      100.0   // PT100 = 100 Ohm bei 0 °C
-#define CALIBRATION_OHMS 440.3   // Gemessener Referenzwiderstand (individuell vermessen!)
-#define SENSOR_WIRES     3       // 3-Draht PT100
+#define CALIBRATION_OHMS 439.60  // Kalibriert per Dekadenbox (2026-04-20)
+#define SENSOR_WIRES     2       // 2-Draht PT100 (Board-Jumper + Firmware konsistent)
 #define SENSOR_OFFSET    0.1     // Temperatur-Offset [°C]
+#define SENSOR_R_OFFSET  -0.24   // Fit-Intercept 0.26 − 0.50 Ω PT100-Kabel
 ```
 
 > `CALIBRATION_OHMS` ist der wichtigste Kalibrierungswert. Typisch wäre 430 Ω,
 > aber der tatsächlich gemessene Widerstand des RREF auf dem Board muss eingetragen werden.
+
+> **Kalibrierung 2026-04-20:** Per Dekadenbox (100/149.4/199.7 Ω) nach 2-Draht-Umstellung
+> gemessen: Lineare Regression ergab Rref = 439.60 Ω (statt vorher 440.3) und einen
+> Fit-Intercept von +0.26 Ω im Dekadenbox-Setup (ohne Kabel). Mit dem PT100-Kabel von
+> 0.5 Ω ergibt sich `SENSOR_R_OFFSET = 0.26 − 0.50 = −0.24 Ω`. Residuen < 0.06 Ω über
+> den gesamten Bereich.
+
+> **Drahtmodus (2-Draht, seit 2026-04-20):** `STD_FLAGS` in `sensor.cpp` enthält
+> **kein** `MAX31865_CONFIG_3WIRE`-Bit mehr. Vorher stand die Firmware auf 3-Draht,
+> während der Sensor nur 2-drahtig verkabelt war – das führte zu einem nichtlinearen,
+> mit R wachsenden Messfehler (z. B. 199.7 Ω → 188.3 Ω), weil der zweite
+> Kompensationsstrom (FORCE2) des MAX31865 ohne passenden dritten Draht einen Fehler
+> proportional zu I·R einprägte. **Board-Jumper und Firmware müssen konsistent sein.**
 
 ### PID
 
@@ -126,10 +140,12 @@ src/
 ### Funktionen
 
 ```cpp
-void    setup_sensor();           // SPI initialisieren, erste Messung blockierend
-float   read_temperature();       // Nicht-blockierend, gibt letzten Wert zurück
-bool    sensor_has_fault();       // MAX31865 Hardware-Fehler
-uint8_t sensor_get_fault_code();  // Fault-Register 0x07
+void     setup_sensor();          // SPI initialisieren, erste Messung blockierend
+float    read_temperature();      // Nicht-blockierend, gibt letzten Wert zurück
+bool     sensor_has_fault();      // MAX31865 Hardware-Fehler
+uint8_t  sensor_get_fault_code(); // Fault-Register 0x07
+uint16_t sensor_get_raw_rtd();    // 15-Bit Rohwert aus RTD-Register (Diagnose)
+float    sensor_get_resistance(); // Berechneter RTD-Widerstand [Ω] (Kalibrierung)
 ```
 
 ### Messprinzip
@@ -152,7 +168,7 @@ Callendar-Van Dusen Koeffizienten (wie Marlin):
 
 Formel:
 ```
-rtd_resistance = (rtd_raw / 32768.0) * CALIBRATION_OHMS
+rtd_resistance = (rtd_raw / 32768.0) * CALIBRATION_OHMS + SENSOR_R_OFFSET
 temp = (sqrt(RTD_A² - 4*RTD_B*(1 - rtd_resistance/SENSOR_OHMS)) - RTD_A) / (2*RTD_B)
 ```
 
@@ -470,6 +486,7 @@ TestResult test_sensor();       // MAX31865 Kommunikation + plausible Temperatur
 TestResult test_heater();       // Kurzer PWM-Puls, Temperaturanstieg prüfen
 TestResult test_fan();          // Lüfter kurz anlaufen lassen
 TestResult test_pid_response(); // Mini-Heizvorgang auf 50 °C, PID-Verhalten prüfen
+TestResult test_raw_rtd();      // 5 s Rohwerte (raw RTD, Widerstand, Temperatur)
 void       run_all_tests();     // Alle Tests sequenziell, Ergebnis auf Serial + WebSocket
 ```
 
@@ -532,6 +549,33 @@ Prüft ob der PID-Regler das Hotend kontrolliert aufheizen kann.
 
 **Pass:** Zieltemperatur innerhalb ±2 °C erreicht, kein Fault.  
 **Fail:** Timeout oder Safety-Fault → PID-Werte prüfen, Hardware-Verkabelung prüfen.
+
+### Test 5: Rohwerte (`test_raw_rtd`)
+
+Gibt über 5 s alle 250 ms die MAX31865-Rohwerte auf Serial aus – nützlich für
+CALIBRATION_OHMS-Feinjustage und Sensor-Diagnose.
+
+```
+1. hotend_task läuft parallel und aktualisiert Messwerte (State-Machine)
+2. 5 s lang alle 250 ms ausgeben:
+     - sensor_get_raw_rtd()    → 15-Bit Rohwert (0…32767)
+     - sensor_get_resistance() → RTD-Widerstand [Ω]
+     - hotend_get_temperature() → Temperatur nach Callendar-Van-Dusen [°C]
+3. raw_min/raw_max protokollieren
+```
+
+**Ausgabeformat:**
+```
+raw     | R       | T
+--------+---------+--------
+ 8203   | 110.234 Ω |  26.45 °C
+```
+
+**Pass:** Mindestens ein Sample mit raw > 0, kein Fault.  
+**Fail:** Nur raw=0 (SPI-Fehler, Sensor nicht angeschlossen) oder Fault-Bit gesetzt.
+
+> **Kalibrier-Hinweis:** Bei bekanntem Referenzwiderstand (z. B. exakter 100-Ω-Widerstand
+> statt PT100) gilt `CALIBRATION_OHMS_neu = CALIBRATION_OHMS_alt · R_ref / R_gemessen`.
 
 ### Aufruf
 

@@ -30,14 +30,16 @@ enum SensorState : uint8_t {
     READ_RTD_REG
 };
 
-static SPIClass        *s_spi          = nullptr;
-static SemaphoreHandle_t s_spi_mutex   = nullptr;
-static SensorState      s_state        = SETUP_BIAS_VOLTAGE;
-static unsigned long    s_next_ms      = 0;
-static float            s_last_temp    = 0.0f;
-static bool             s_fault        = false;
-static uint8_t          s_fault_code   = 0;
-static const uint8_t    STD_FLAGS      = MAX31865_CONFIG_3WIRE | MAX31865_CONFIG_FILT50;
+static SPIClass        *s_spi             = nullptr;
+static SemaphoreHandle_t s_spi_mutex      = nullptr;
+static SensorState      s_state           = SETUP_BIAS_VOLTAGE;
+static unsigned long    s_next_ms         = 0;
+static float            s_last_temp       = 0.0f;
+static uint16_t         s_last_raw_rtd    = 0;
+static float            s_last_resistance = 0.0f;
+static bool             s_fault           = false;
+static uint8_t          s_fault_code      = 0;
+static const uint8_t    STD_FLAGS         = MAX31865_CONFIG_FILT50;  // 2-Draht (kein 3WIRE-Bit)
 
 // ── SPI-Hilfsfunktionen (mit Mutex) ─────────────────────────
 
@@ -111,7 +113,9 @@ static float read_rtd_temp() {
         s_fault_code = spi_read_reg(MAX31865_FAULT_REG);
     }
     raw >>= 1;
-    float resistance = ((float)raw / 32768.0f) * CALIBRATION_OHMS;
+    float resistance = ((float)raw / 32768.0f) * CALIBRATION_OHMS + SENSOR_R_OFFSET;
+    s_last_raw_rtd    = raw;
+    s_last_resistance = resistance;
     return rtd_to_temp(resistance) + SENSOR_OFFSET;
 }
 
@@ -177,6 +181,8 @@ float read_temperature() {
     return s_last_temp;
 }
 
-bool    sensor_has_fault()       { return s_fault; }
-uint8_t sensor_get_fault_code()  { return s_fault_code; }
-void    sensor_clear_fault()     { s_fault = false; s_fault_code = 0; }
+bool     sensor_has_fault()      { return s_fault; }
+uint8_t  sensor_get_fault_code() { return s_fault_code; }
+void     sensor_clear_fault()    { s_fault = false; s_fault_code = 0; }
+uint16_t sensor_get_raw_rtd()    { return s_last_raw_rtd; }
+float    sensor_get_resistance() { return s_last_resistance; }
