@@ -24,7 +24,14 @@
       "Bash(where.exe pio:*)",
       "Bash(where.exe platformio:*)",
       "Read(//c/Users/phili/.platformio/penv/Scripts/**)",
-      "Read(//c/Users/phili/.platformio/penv/**)"
+      "Read(//c/Users/phili/.platformio/penv/**)",
+      "Bash(powershell.exe:*)",
+      "Bash(kill %1)",
+      "Bash(curl:*)",
+      "Bash(git:*)",
+      "Bash(ls ~/.platformio/penv/Scripts/pio*)",
+      "Bash(ls \"/c/Users/phili/.platformio/penv/Scripts/pio\"*)",
+      "Bash(/c/Users/phili/.platformio/penv/Scripts/pio.exe run *)"
     ]
   }
 }

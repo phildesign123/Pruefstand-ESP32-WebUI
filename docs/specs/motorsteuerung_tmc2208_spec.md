@@ -25,6 +25,7 @@ Ein E-Steps-Kalibrierverfahren ist integriert.
 
 ## 2  Hardware-Schnittstellen
 
+
 ### 2.1  Step/Dir/Enable — RMT + GPIO
 
 | Signal | GPIO | Richtung | Bemerkung                      |
@@ -679,3 +680,4 @@ Das `motor`-Component hat **keine Abhängigkeit** zum HTTP-Server.
 - [ ] Klären: Braucht das Modul einen Positions-Tracker (Schritte zählen)?
 - [ ] Single-Wire-UART implementieren oder 2-Wire beibehalten?
 - [ ] Web-UI-Modul als separate Spec schreiben
+
