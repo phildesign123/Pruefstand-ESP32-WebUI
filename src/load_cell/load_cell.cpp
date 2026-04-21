@@ -1,7 +1,5 @@
 #include "load_cell.h"
 #include "nau7802.h"
-#include "filter_median.h"
-#include "filter_avg.h"
 #include "../config.h"
 #include <Preferences.h>
 #include "freertos/FreeRTOS.h"
@@ -9,24 +7,22 @@
 #include "freertos/semphr.h"
 
 // =============================================================
-// Wägezellen-Modul: NAU7802 + Median/AvgFilter + Tara/Kalibrierung
-// DRDY-ISR gibt Semaphore frei → Task liest mit exakt 80 Hz
+// Wägezellen-Modul: NAU7802 @ 20 SPS + Tara/Kalibrierung
+// Ohne externen Filter – internes ADC-Oversampling reicht.
+// Heater-Einstreuungs-Kompensation optional (LOAD_CELL_HEATER_COMP_ENABLE).
 // =============================================================
 
 static TwoWire          *s_wire        = nullptr;
 static SemaphoreHandle_t s_i2c_mutex   = nullptr;
 static TaskHandle_t      s_task_handle = nullptr;
 
-static MedianFilter      s_median;
-static AvgFilter         s_avg;
-
-static volatile int32_t  s_filtered_raw = 0;
+static volatile int32_t  s_filtered_raw = 0;  // Name historisch – enthält Rohwert (+ Kompensation)
 static volatile float    s_weight_g     = 0.0f;
 
 static int32_t  s_tare_offset   = 0;
 static float    s_cal_factor    = 1000.0f;  // Default (unkalibriert)
 static bool     s_calibrated    = false;
-static volatile int32_t s_ext_compensation = 0;  // Heater-Kompensation
+static volatile int32_t s_ext_compensation = 0;  // Heater-Kompensation (Setter bleibt aktiv, Anwendung per LOAD_CELL_HEATER_COMP_ENABLE)
 
 static Preferences s_prefs;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -73,7 +69,7 @@ static void i2c_bus_recovery() {
 
 static void load_cell_task(void *arg) {
     for (;;) {
-        // Polling: DRDY-Register oder GPIO prüfen (80 SPS = 12.5 ms)
+        // Polling: DRDY-Register oder GPIO prüfen (20 SPS = 50 ms)
         if (!nau7802_is_ready(*s_wire, s_i2c_mutex)) {
             if (!nau7802_last_comm_ok()) {
                 if (s_i2c_errors == 0) {
@@ -122,16 +118,17 @@ static void load_cell_task(void *arg) {
 
         int32_t raw = nau7802_read_raw(*s_wire, s_i2c_mutex);
 
-        s_median.push(raw);
-        int32_t median_val = s_median.get();
+#if LOAD_CELL_HEATER_COMP_ENABLE
+        int32_t value = raw + s_ext_compensation;
+#else
+        (void)s_ext_compensation;  // Setter bleibt funktional, Wert wird nur nicht angewendet
+        int32_t value = raw;
+#endif
 
-        s_avg.push(median_val);
-        int32_t avg_val = s_avg.get() + s_ext_compensation;
-
-        float weight = (float)(avg_val - s_tare_offset) / s_cal_factor;
+        float weight = (float)(value - s_tare_offset) / s_cal_factor;
 
         portENTER_CRITICAL(&s_mux);
-        s_filtered_raw = avg_val;
+        s_filtered_raw = value;
         s_weight_g     = weight;
         portEXIT_CRITICAL(&s_mux);
     }

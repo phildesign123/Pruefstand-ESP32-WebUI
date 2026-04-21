@@ -85,17 +85,18 @@
 #define NAU7802_DRDY_PIN        34
 #define NAU7802_I2C_ADDR        0x2A
 #define NAU7802_I2C_FREQ        100000   // 100 kHz (stabil bei langen Kabeln)
-#define LOAD_CELL_MEDIAN_SIZE   5
-#define LOAD_CELL_AVG_SIZE      10
-#define LOAD_CELL_TARE_SAMPLES  80
-#define LOAD_CELL_CAL_SAMPLES   80
-#define LOAD_CELL_HEATER_COMP   1100       // Raw-Counts Kompensation bei Duty=1.0 (Heater-Einstreuung)
+#define LOAD_CELL_MEDIAN_SIZE   5              // (ungenutzt seit Filter-Entfernung)
+#define LOAD_CELL_AVG_SIZE      10             // (ungenutzt seit Filter-Entfernung)
+#define LOAD_CELL_TARE_SAMPLES  20             // 1 s bei 20 SPS
+#define LOAD_CELL_CAL_SAMPLES   20             // 1 s bei 20 SPS
+#define LOAD_CELL_HEATER_COMP   1100           // Raw-Counts Kompensation bei Duty=1.0 (Heater-Einstreuung)
+#define LOAD_CELL_HEATER_COMP_ENABLE 1         // 1 = Software-Kompensation aktiv, 0 = aus
 
 // ── Datenlogger / SD-Karte ───────────────────────────────────
-#define DATALOG_INTERVAL_MS      100           // 10 Hz (Gewicht)
+#define DATALOG_INTERVAL_MS      50            // 20 Hz (Gewicht)
 #define DATALOG_BUFFER_SIZE    16384          // RAM-Puffer in Bytes für CSV-Zeilen
-#define DATALOG_FLUSH_SAMPLES   100           // Alle N Samples auf SD schreiben + flush (100 = alle 10s bei 10Hz)
-#define DATALOG_QUEUE_LEN       200           // Queue zwischen Sampler und Writer (20 s Reserve bei 10 Hz)
+#define DATALOG_FLUSH_SAMPLES   100           // Alle N Samples auf SD schreiben + flush (100 = alle 5s bei 20Hz)
+#define DATALOG_QUEUE_LEN       200           // Queue zwischen Sampler und Writer (10 s Reserve bei 20 Hz)
 #define DATALOG_MAX_FILE_SIZE_MB 10
 #define DATALOG_MAX_FILES        100
 
@@ -117,7 +118,7 @@
 #define SEQ_TEMP_TOLERANCE      2.0f
 #define SEQ_TEMP_STABLE_TIME_S  10
 #define SEQ_HEATING_TIMEOUT_S   240
-#define SEQ_LOG_INTERVAL_MS     100
+#define SEQ_LOG_INTERVAL_MS     50
 #define SEQ_MAX_SEQUENCES       20
 
 // ── Task-Konfiguration ────────────────────────────────────────

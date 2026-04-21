@@ -569,7 +569,7 @@ async function setMotorDir() {
 }
 
 async function datalogStart() {
-  const r = await api('POST', '/api/datalog/start', { interval_ms: 100 });
+  const r = await api('POST', '/api/datalog/start', { interval_ms: 50 });
   if (r && r.ok) toast('Aufzeichnung gestartet.');
   else toast(r?.error || 'Start fehlgeschlagen!');
   refreshSettings();
@@ -601,7 +601,7 @@ async function deleteAllFiles() {
 // ── Dashboard Aufzeichnung (Karte) ───────────────────────────
 async function recStartDash() {
   const name = document.getElementById('rec-name-dash').value.trim();
-  const body = { interval_ms: 100 };
+  const body = { interval_ms: 50 };
   if (name) body.filename = name;
   const r = await api('POST', '/api/datalog/start', body);
   if (r && r.ok) toast('Aufzeichnung gestartet.');
@@ -634,7 +634,7 @@ async function refreshRecDash() {
 
 async function recStart() {
   const name = document.getElementById('rec-name').value.trim();
-  const body = { interval_ms: 100 };
+  const body = { interval_ms: 50 };
   if (name) body.filename = name;
   const r = await api('POST', '/api/datalog/start', body);
   if (r && r.ok) toast('Aufzeichnung gestartet.');

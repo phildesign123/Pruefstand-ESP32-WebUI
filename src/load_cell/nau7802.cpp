@@ -52,8 +52,8 @@ bool nau7802_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
 
     // CTRL1: VLDO=3.3V (bits[5:3]=0b100) + Gain=128 (bits[2:0]=0b111) = 0x27
     i2c_write_reg(wire, i2c_mutex, NAU7802_REG_CTRL1, (0b100 << 3) | GAIN_128);
-    // CTRL2: 80 SPS
-    i2c_write_reg(wire, i2c_mutex, NAU7802_REG_CTRL2, CRS_80SPS);
+    // CTRL2: 20 SPS (internes ADC-Oversampling statt externem Filter)
+    i2c_write_reg(wire, i2c_mutex, NAU7802_REG_CTRL2, CRS_20SPS);
     // Chopper aktiv
     i2c_write_reg(wire, i2c_mutex, NAU7802_REG_ADC, 0x30);
 
@@ -79,7 +79,7 @@ bool nau7802_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
     uint8_t pu = i2c_read_reg(wire, i2c_mutex, NAU7802_REG_PU_CTRL);
     i2c_write_reg(wire, i2c_mutex, NAU7802_REG_PU_CTRL, pu | PU_CTRL_CS);
 
-    Serial.println("[NAU7802] Initialisiert (AVDDS=1, VLDO=3.3V, Gain=128, 80 SPS).");
+    Serial.println("[NAU7802] Initialisiert (AVDDS=1, VLDO=3.3V, Gain=128, 20 SPS).");
     return true;
 }
 

@@ -116,15 +116,19 @@ Schreiben automatisch gelöscht.
 
 | Parameter       | Default | config.h-Key              |
 | --------------- | ------- | ------------------------- |
-| Log-Intervall   | 100 ms  | `DATALOG_INTERVAL_MS`     |
+| Log-Intervall   | 50 ms   | `DATALOG_INTERVAL_MS`     |
 | Min. Intervall  | 10 ms   | —                         |
 | Max. Intervall  | 60000 ms| —                         |
 
-Default ist 10 Hz (100 ms). Das Intervall ist zur Laufzeit über
+Default ist 20 Hz (50 ms) seit 2026-04-20. Das Intervall ist zur Laufzeit über
 `datalog_set_interval()` änderbar.
 
-Bei 10 Hz und ~80 Byte pro Zeile ergibt sich ca. 2.8 MB pro Stunde —
-eine 1 GB SD-Karte fasst damit über 350 Stunden Dauerbetrieb.
+Bei 20 Hz und ~80 Byte pro Zeile ergibt sich ca. 5.6 MB pro Stunde —
+eine 1 GB SD-Karte fasst damit ~175 Stunden Dauerbetrieb.
+
+> **NAU7802-SPS:** Seit 2026-04-20 läuft der NAU7802 mit **20 SPS** (statt 80 SPS).
+> Dadurch greift das interne ADC-Oversampling voll — externe Median-/Avg-Filter
+> wurden entfernt. Jedes Log-Sample bekommt exakt einen frischen ADC-Wert.
 
 ---
 
@@ -146,13 +150,13 @@ Datenquellen (Sensoren, ~5 us Lesezeit)
     |
     v
 +-----------------------------+
-|  Sampler-Task (Core 1)      |  10 Hz, liest Sensoren
+|  Sampler-Task (Core 1)      |  20 Hz, liest Sensoren
 |  Kein SPI-Zugriff!          |
 +------------+----------------+
              |
              v  xQueueSend (non-blocking)
 +-----------------------------+
-|  FreeRTOS Queue             |  200 Einträge (20 s Reserve bei 10 Hz)
+|  FreeRTOS Queue             |  200 Einträge (10 s Reserve bei 20 Hz)
 +------------+----------------+
              |
              v  xQueueReceive (1 s Timeout)
@@ -171,7 +175,7 @@ Datenquellen (Sensoren, ~5 us Lesezeit)
 | Queue-Kapazität        | 200      | `DATALOG_QUEUE_LEN`          |
 
 Der Writer-Task flusht auf die SD-Karte wenn:
-- **100 Samples** im Puffer sind (= alle 10 s bei 10 Hz), ODER
+- **100 Samples** im Puffer sind (= alle 5 s bei 20 Hz), ODER
 - der Puffer zu **90 %** voll ist (weniger als 150 Bytes frei)
 
 Bei Queue-Überlauf (Sampler schneller als Writer) werden Samples
@@ -221,7 +225,7 @@ Nach 3 fehlgeschlagenen Retries wird der Puffer verworfen und
 ### 5.1  Prinzip
 
 Der Sampler-Task läuft auf Core 1 (Realtime-Core) mit Priorität 3
-und fragt mit `vTaskDelayUntil()` alle 100 ms (Default) die aktuellen
+und fragt mit `vTaskDelayUntil()` alle 50 ms (Default) die aktuellen
 Sensorwerte ab. Die Werte werden in ein `SampleData`-Struct gepackt
 und non-blocking per `xQueueSend()` an den Writer übergeben.
 
@@ -521,7 +525,7 @@ Es gibt keine separaten Dateien für Sampler, Writer oder Ringpuffer.
 | ------------------------ | ---------- | --------------------------------------------- |
 | `SD_CS`                  | 4          | Chip-Select GPIO                              |
 | `SD_SPI_MHZ`             | 4000000    | SPI-Takt (4 MHz)                              |
-| `DATALOG_INTERVAL_MS`    | 100        | Default-Abtastintervall (10 Hz)               |
+| `DATALOG_INTERVAL_MS`    | 50         | Default-Abtastintervall (20 Hz)               |
 | `DATALOG_BUFFER_SIZE`    | 16384      | RAM-Puffer in Bytes                           |
 | `DATALOG_FLUSH_SAMPLES`  | 100        | Flush nach N Samples                          |
 | `DATALOG_QUEUE_LEN`      | 200        | Queue-Kapazität (Sampler → Writer)            |
@@ -542,7 +546,7 @@ Es gibt keine separaten Dateien für Sampler, Writer oder Ringpuffer.
 | 5         | `hotend_pid_task`   | Hotend-PID     | 1    | ~6 Hz Regelung                |
 | 4         | `motor_mgr_task`    | Motor          | 1    | Bewegungskoordination         |
 | 4         | `sequencer_task`    | Sequencer      | 1    | Messreihen-Steuerung          |
-| 3         | `datalog_s`         | **Datenlogger**| 1    | 10 Hz Sampling                |
+| 3         | `datalog_s`         | **Datenlogger**| 1    | 20 Hz Sampling                |
 | 3         | `ws_push_task`      | Web-UI         | 0    | WebSocket-Push                |
 | 2         | `datalog_w`         | **Datenlogger**| 0    | SD-Karte schreiben            |
 
@@ -588,7 +592,7 @@ Es gibt keine separaten Dateien für Sampler, Writer oder Ringpuffer.
 |            |         | - Kraft in Newton statt Gewicht in Gramm                    |
 |            |         | - Deutsche Spaltenbezeichnungen (kraft_N, temperatur)       |
 |            |         | - Dateiname DD-MM-YYYY statt YYYYMMDD                       |
-|            |         | - Default 10 Hz statt 1 Hz                                  |
+|            |         | - Default 20 Hz statt 1 Hz                                  |
 |            |         | - SPI-Takt 4 MHz statt 20 MHz                               |
 |            |         | - STOPPING-Zustand hinzugefügt                              |
 |            |         | - Retry-Logik bei SD-Schreibfehlern                         |

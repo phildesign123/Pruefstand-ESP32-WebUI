@@ -27,6 +27,7 @@ static Preferences s_prefs;
 static AsyncWebServer  s_server(WEBUI_PORT);
 static AsyncWebSocket  s_ws(WEBUI_WS_PATH);
 static volatile time_t s_pending_epoch = 0;  // Browser-Zeit, wird im Push-Task gesetzt
+static bool            s_littlefs_ready = false;
 
 // ── WebSocket-Push-Task (10 Hz) ──────────────────────────────
 
@@ -764,8 +765,16 @@ static void register_routes() {
         ESP.restart();
     });
 
-    // Statische Dateien aus LittleFS (NACH allen API-Routen!)
-    s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    // Statische Dateien nur registrieren, wenn LittleFS erfolgreich gemountet ist.
+    // Sonst verursacht jeder Zugriff interne exists()-Fehler im VFS-Layer.
+    if (s_littlefs_ready) {
+        s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    } else {
+        s_server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
+            req->send(503, "text/plain",
+                      "LittleFS nicht gemountet. Frontend-Dateien fehlen oder das Filesystem muss neu geladen werden.");
+        });
+    }
 
     s_server.onNotFound([](AsyncWebServerRequest *req) {
         req->send(404, "text/plain", "Not Found");
@@ -827,8 +836,11 @@ void webui_init() {
     }
 
     // LittleFS mounten (Frontend-Dateien)
-    if (!LittleFS.begin()) {
+    s_littlefs_ready = LittleFS.begin();
+    if (!s_littlefs_ready) {
         Serial.println("[WEBUI] LittleFS nicht gefunden – Web-Frontend fehlt!");
+    } else {
+        Serial.println("[WEBUI] LittleFS erfolgreich gemountet.");
     }
 
     register_routes();
