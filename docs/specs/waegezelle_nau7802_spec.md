@@ -462,7 +462,26 @@ des Sigma-Delta-ADC durchgelassen wurde.
 
 ---
 
-## 11  Offene Punkte / TODOs
+## 11  Änderungshistorie
+
+### 2026-04-30 — Fix: Mutex-Deadlock in load_cell_tare / load_cell_calibrate
+
+**Problem:** `load_cell_tare()` und `load_cell_calibrate()` riefen
+`vTaskSuspend(s_task_handle)` auf. Falls `load_cell_task` zu diesem Zeitpunkt
+den I2C-Mutex hielt (innerhalb `nau7802_is_ready` oder `nau7802_read_raw`),
+wurde der Task **mit gesperrtem Mutex suspendiert** → nachfolgende Mutex-Anfrage
+in der Tare-Schleife wartete dauerhaft → Deadlock → aufrufender Task (async_tcp)
+blockiert für >15 s → Task-WDT-Crash.
+
+**Fix:** `vTaskSuspend`/`vTaskResume` vollständig entfernt. Der I2C-Mutex
+serialisiert Task und Tare/Kalibrierung bereits korrekt. NAU7802-DRDY wird erst
+beim Lesen der ADC-Register gelöscht → Tare wartet automatisch auf neue Samples.
+Tare dauert ggf. ~2 s statt ~1 s (shared Sample-Stream bei 20 SPS), bleibt
+aber korrekt und weit unter dem 15-s-WDT-Limit.
+
+---
+
+## 12  Offene Punkte / TODOs
 
 - [ ] Abgleich mit bestehendem Code aus dem Marlin-ESP32-Projekt
 - [ ] Verstärkung (Gain) je nach Wägezellen-Typ anpassen (128× ggf. zu hoch/niedrig)

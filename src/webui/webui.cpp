@@ -87,6 +87,26 @@ static void ws_push_task(void *arg) {
     }
 }
 
+// ── LoadCell-Command-Worker (außerhalb async_tcp-Kontext) ────
+// load_cell_tare/calibrate blockieren 1–2 s → nie aus async_tcp aufrufen.
+enum LcCmd : uint8_t { LC_NONE = 0, LC_TARE, LC_CAL };
+static volatile LcCmd s_lc_cmd        = LC_NONE;
+static volatile float s_lc_cal_weight = 0.0f;
+static TaskHandle_t   s_lc_task       = nullptr;
+
+static void loadcell_cmd_worker(void *) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        LcCmd cmd = s_lc_cmd;
+        s_lc_cmd  = LC_NONE;
+        if (cmd == LC_TARE) {
+            load_cell_tare();
+        } else if (cmd == LC_CAL) {
+            load_cell_calibrate(s_lc_cal_weight);
+        }
+    }
+}
+
 // ── WebSocket Befehlsverarbeitung ────────────────────────────
 
 static void on_ws_message(AsyncWebSocketClient *client,
@@ -113,7 +133,7 @@ static void on_ws_message(AsyncWebSocketClient *client,
     } else if (strcmp(cmd, "motor_stop") == 0) {
         motor_stop();
     } else if (strcmp(cmd, "tare") == 0) {
-        load_cell_tare();
+        if (s_lc_task) { s_lc_cmd = LC_TARE; xTaskNotifyGive(s_lc_task); }
     }
 }
 
@@ -181,16 +201,15 @@ static void api_loadcell_get(AsyncWebServerRequest *req) {
 }
 
 static void api_loadcell_tare(AsyncWebServerRequest *req) {
-    load_cell_tare();
+    if (s_lc_task) { s_lc_cmd = LC_TARE; xTaskNotifyGive(s_lc_task); }
     req->send(200, "application/json", "{\"ok\":true}");
 }
 
 static void api_loadcell_cal(AsyncWebServerRequest *req, JsonVariant &body) {
     float w = body["weight_g"] | 0.0f;
-    if (w <= 0 || !load_cell_calibrate(w))
-        req->send(400, "application/json", "{\"error\":\"invalid\"}");
-    else
-        req->send(200, "application/json", "{\"ok\":true}");
+    if (w <= 0) { req->send(400, "application/json", "{\"error\":\"invalid\"}"); return; }
+    if (s_lc_task) { s_lc_cal_weight = w; s_lc_cmd = LC_CAL; xTaskNotifyGive(s_lc_task); }
+    req->send(200, "application/json", "{\"ok\":true}");
 }
 
 // --- Motor ---
@@ -544,6 +563,52 @@ static char s_ssid_ap[33];
 static char s_pass_ap[33];
 static bool s_wifi_sta_mode = false;  // true = STA verbunden, false = AP-Modus
 
+// ── WiFi-Scan Worker (außerhalb async_tcp-Kontext) ───────────
+// WiFi.scanNetworks() kann 10–30 s blockieren → nie aus async_tcp aufrufen.
+static char          s_scan_json[1600]  = "{\"networks\":[]}";
+static volatile bool s_scan_running     = false;
+static TaskHandle_t  s_scan_task_handle = nullptr;
+
+static void wifi_scan_worker(void *) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        s_scan_running = true;
+
+        int n = WiFi.scanNetworks();
+
+        JsonDocument doc;
+        JsonArray arr = doc["networks"].to<JsonArray>();
+        for (int i = 0; i < n; i++) {
+            String ssid = WiFi.SSID(i);
+            if (ssid.length() == 0) continue;
+            bool dup = false;
+            for (int j = 0; j < i; j++) {
+                if (WiFi.SSID(j) == ssid) { dup = true; break; }
+            }
+            if (dup) continue;
+            JsonObject net = arr.add<JsonObject>();
+            net["ssid"] = ssid;
+            net["rssi"] = WiFi.RSSI(i);
+            net["open"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+        }
+        bool found = false;
+        for (int i = 0; i < n; i++) {
+            if (WiFi.SSID(i) == s_ssid_sta) { found = true; break; }
+        }
+        if (!found && strlen(s_ssid_sta) > 0) {
+            JsonObject net = arr.add<JsonObject>();
+            net["ssid"] = s_ssid_sta;
+            net["rssi"] = 0;
+            net["open"] = false;
+        }
+        WiFi.scanDelete();
+        serializeJson(doc, s_scan_json, sizeof(s_scan_json));
+
+        s_scan_running = false;
+        Serial.printf("[WIFI] Scan fertig: %d Netzwerke\n", n >= 0 ? n : 0);
+    }
+}
+
 static void api_wifi_status(AsyncWebServerRequest *req) {
     JsonDocument doc;
     doc["ap_ssid"]       = s_ssid_ap;
@@ -588,43 +653,13 @@ static void api_wifi_save(AsyncWebServerRequest *req, JsonVariant &body) {
 }
 
 static void api_wifi_scan(AsyncWebServerRequest *req) {
-    Serial.println("[WIFI] Scan gestartet...");
-    int n = WiFi.scanNetworks();
-    Serial.printf("[WIFI] Scan fertig: %d Netzwerke\n", n);
-
-    JsonDocument doc;
-    JsonArray arr = doc["networks"].to<JsonArray>();
-    // Duplikate vermeiden
-    for (int i = 0; i < n; i++) {
-        String ssid = WiFi.SSID(i);
-        if (ssid.length() == 0) continue;
-        // Duplikat-Check
-        bool dup = false;
-        for (int j = 0; j < i; j++) {
-            if (WiFi.SSID(j) == ssid) { dup = true; break; }
-        }
-        if (dup) continue;
-        JsonObject net = arr.add<JsonObject>();
-        net["ssid"] = ssid;
-        net["rssi"] = WiFi.RSSI(i);
-        net["open"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+    // Scan in Hintergrund-Task starten (nicht blockierend für async_tcp)
+    if (!s_scan_running && s_scan_task_handle) {
+        xTaskNotifyGive(s_scan_task_handle);
+        Serial.println("[WIFI] Scan gestartet...");
     }
-    // Aktuelle STA-SSID immer mit aufnehmen falls nicht gefunden
-    bool found = false;
-    for (int i = 0; i < n; i++) {
-        if (WiFi.SSID(i) == s_ssid_sta) { found = true; break; }
-    }
-    if (!found && strlen(s_ssid_sta) > 0) {
-        JsonObject net = arr.add<JsonObject>();
-        net["ssid"] = s_ssid_sta;
-        net["rssi"] = 0;
-        net["open"] = false;
-    }
-    WiFi.scanDelete();
-
-    char buf[1536];
-    serializeJson(doc, buf, sizeof(buf));
-    req->send(200, "application/json", buf);
+    // Gecachte Ergebnisse zurückgeben (leer beim ersten Aufruf, gefüllt danach)
+    req->send(200, "application/json", s_scan_json);
 }
 
 // ── Routen registrieren ──────────────────────────────────────
@@ -854,6 +889,15 @@ void webui_init() {
     // Datalog-Start-Worker (führt datalog_start außerhalb async_tcp aus)
     xTaskCreatePinnedToCore(datalog_start_worker, "dl_start", 4096,
                             nullptr, 3, &s_dl_start_task, CORE_REALTIME);
+
+    // LoadCell-Command-Worker (führt Tare/Kalibrierung außerhalb async_tcp aus)
+    // Prio > TASK_PRIO_LOADCELL (6): damit lc_cmd die DRDY-Samples vor load_cell_task bekommt
+    xTaskCreatePinnedToCore(loadcell_cmd_worker, "lc_cmd", 4096,
+                            nullptr, TASK_PRIO_LOADCELL + 1, &s_lc_task, CORE_REALTIME);
+
+    // WiFi-Scan-Worker (führt WiFi.scanNetworks() außerhalb async_tcp aus)
+    xTaskCreatePinnedToCore(wifi_scan_worker, "wifi_scan", 4096,
+                            nullptr, 2, &s_scan_task_handle, CORE_WIFI);
 }
 
 void webui_notify_clients(const char *json) {

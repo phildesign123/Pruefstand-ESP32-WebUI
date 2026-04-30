@@ -88,7 +88,9 @@ static void rmt_step_task(void *arg) {
                 xSemaphoreTake(s_done_sem, 0);
                 rmt_write_items(RMT_CHANNEL, items, block, false);
 
-                if (xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(1000)) == pdFALSE) break;
+                // Timeout = Blockdauer + 500 ms Reserve (verhindert Frühausbruch bei < 62 Hz)
+                uint32_t block_ms = (uint32_t)((uint64_t)block * s_period_us / 1000) + 500;
+                if (xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(block_ms)) == pdFALSE) break;
 
                 remaining    -= block;
                 s_steps_done += block;
@@ -127,7 +129,7 @@ bool motor_rmt_init(int step_pin) {
     rmt_register_tx_end_callback(rmt_done_callback, nullptr);
 
     // Interne Task erstellen
-    xTaskCreatePinnedToCore(rmt_step_task, "rmt_step", 2048,
+    xTaskCreatePinnedToCore(rmt_step_task, "rmt_step", 4096,
                             nullptr, TASK_PRIO_MOTOR + 1,
                             &s_rmt_task_hdl, CORE_REALTIME);
     Serial.println("[RMT] Initialisiert (1 MHz, CH0).");
@@ -154,7 +156,8 @@ void motor_rmt_stop() {
 
 bool motor_rmt_wait(uint32_t timeout_ms) {
     if (!s_running) return true;
-    return xSemaphoreTake(s_done_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    TickType_t ticks = (timeout_ms == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    return xSemaphoreTake(s_done_sem, ticks) == pdTRUE;
 }
 
 bool motor_rmt_is_running() { return s_running; }

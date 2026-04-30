@@ -175,7 +175,8 @@ bool load_cell_init(TwoWire &wire, SemaphoreHandle_t i2c_mutex) {
 }
 
 bool load_cell_tare() {
-    if (s_task_handle) vTaskSuspend(s_task_handle);
+    // Kein vTaskSuspend: load_cell_task könnte den I2C-Mutex halten →  Deadlock.
+    // I2C-Mutex serialisiert Tare und Task natürlich; beide teilen den Sample-Stream.
     int64_t acc = 0;
     int     count = 0;
     for (int i = 0; i < LOAD_CELL_TARE_SAMPLES; i++) {
@@ -187,7 +188,6 @@ bool load_cell_tare() {
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
         count++;
     }
-    if (s_task_handle) vTaskResume(s_task_handle);
     if (count == 0) return false;
     portENTER_CRITICAL(&s_mux);
     s_tare_offset = (int32_t)(acc / count);
@@ -199,7 +199,6 @@ bool load_cell_tare() {
 bool load_cell_calibrate(float known_weight_g) {
     if (known_weight_g <= 0.0f) return false;
 
-    if (s_task_handle) vTaskSuspend(s_task_handle);
     int64_t acc = 0;
     int     count = 0;
     for (int i = 0; i < LOAD_CELL_CAL_SAMPLES; i++) {
@@ -211,7 +210,6 @@ bool load_cell_calibrate(float known_weight_g) {
         acc += nau7802_read_raw(*s_wire, s_i2c_mutex);
         count++;
     }
-    if (s_task_handle) vTaskResume(s_task_handle);
     if (count == 0) return false;
     int32_t avg = (int32_t)(acc / count);
     float factor = (float)(avg - s_tare_offset) / known_weight_g;

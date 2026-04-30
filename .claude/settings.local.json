@@ -31,7 +31,8 @@
       "Bash(git:*)",
       "Bash(ls ~/.platformio/penv/Scripts/pio*)",
       "Bash(ls \"/c/Users/phili/.platformio/penv/Scripts/pio\"*)",
-      "Bash(/c/Users/phili/.platformio/penv/Scripts/pio.exe run *)"
+      "Bash(/c/Users/phili/.platformio/penv/Scripts/pio.exe run *)",
+      "Bash(\"/c/Users/phili/.platformio/penv/Scripts/pio.exe\" run *)"
     ]
   }
 }

@@ -1,0 +1,23 @@
+temperatur fix
+
+[HOTEND] T=121.5 / 0.0 °C  R=146.599 Ω  EIGENTLICH 149,4 Ω    
+[HOTEND] T=234.1 / 0.0 °C  R=188.281 Ω  Duty=0%  Fan=255 EIGENTLICH  199,7 Ω 
+[HOTEND] T=-0.9 / 0.0 °C  R=99.597 Ω  Duty=0%  Fan=0 EIGENTLICH 99,6 Ω 
+
+
+
+[HOTEND] T=0.2 / 0.0 °C  R=100.040 Ω  EIGENTLICH 99,6 Ω  
+[HOTEND] T=130.0 / 0.0 °C  R=149.797 Ω EIGENTLICH 149,4 Ω  
+[HOTEND] T=267.3 / 0.0 °C  R=200.307 Ω  EIGENTLICH  199,7 Ω 
+
+
+ T=263.6 / 0.0 °C  R=198.981 Ω  EIGENTLICH  199,7 Ω 
+ [HOTEND] T=127.3 / 0.0 °C  R=148.807 ΩEIGENTLICH 149,4 Ω   
+
+ 176,1
+
+ S200
+
+ 
+5.320
+N  |  Rohwert: -603225

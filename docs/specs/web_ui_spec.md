@@ -635,11 +635,14 @@ SPI-Mutex-geschützt.
 
 ### 8.1  FreeRTOS-Tasks
 
-| Task-Name          | Stack  | Priorität | Funktion                             |
-| ------------------ | ------ | --------- | ------------------------------------ |
-| `httpd`            | 8192 B | 3         | HTTP-Server (ESP-IDF intern)         |
-| `ws_push_task`     | 4096 B | 3         | WebSocket-Daten alle 100 ms senden   |
-| `sequencer_task`   | 4096 B | 4         | Messreihen-Sequencer                 |
+| Task-Name          | Stack  | Priorität | Core | Funktion                                         |
+| ------------------ | ------ | --------- | ---- | ------------------------------------------------ |
+| `async_tcp`        | —      | 5         | 0    | AsyncTCP/ESPAsyncWebServer Ereignisschleife      |
+| `ws_push`          | 4096 B | 3         | 0    | WebSocket-Daten alle 100 ms senden               |
+| `sequencer`        | 4096 B | 4         | 1    | Messreihen-Sequencer                             |
+| `dl_start`         | 4096 B | 3         | 1    | `datalog_start()` außerhalb async_tcp            |
+| `wifi_scan`        | 4096 B | 2         | 0    | `WiFi.scanNetworks()` außerhalb async_tcp        |
+| `lc_cmd`           | 4096 B | 3         | 1    | `load_cell_tare/calibrate()` außerhalb async_tcp |
 
 Der Sequencer-Task hat Priorität 4 (gleich wie `motor_mgr_task`),
 da er Bewegungen koordiniert und rechtzeitig auf Events reagieren muss.
@@ -736,7 +739,53 @@ Im STA-Modus (eigenes WLAN) unter `http://esp32.local` (via mDNS).
 
 ---
 
-## 12  Offene Punkte / TODOs
+## 12  Änderungshistorie
+
+### 2026-04-30 — Crash-Fix: Task-Watchdog async_tcp (WDT)
+
+**Problem:** Der ESP32 crashte mit `task_wdt: async_tcp (CPU 1) did not reset the watchdog`
+nach ~564 Sekunden Betrieb. Ursache: `async_tcp` (AsyncTCP-Library) subscribed sich per
+`esp_task_wdt_add()` beim Task-WDT und muss nach jedem Event `esp_task_wdt_reset()` aufrufen.
+Blockierende Aufrufe in HTTP-Handlern verhindern diesen Reset.
+
+**Ursache 1 — `api_wifi_scan` blockiert async_tcp für 10–30 s:**
+`WiFi.scanNetworks()` läuft synchron/blockierend. Bei einem Scan dauert es 10–30 Sekunden,
+bis der Aufruf zurückkehrt. Das überschreitet den WDT-Timeout (15 s) → Crash.
+
+**Ursache 2 — `load_cell_tare`/`load_cell_calibrate` mit Mutex-Deadlock-Risiko:**
+Tare/Kalibrierung riefen `vTaskSuspend(load_cell_task_handle)` auf. Falls `load_cell_task`
+gerade den I2C-Mutex hielt (z. B. in `nau7802_read_raw`), wurde der Task suspendiert
+**während der Mutex gesperrt war**. Die Tare-Funktion wartete dann mit
+`xSemaphoreTake(i2c_mutex, portMAX_DELAY)` → Deadlock → async_tcp blockiert → WDT.
+
+**Fixes (webui.cpp + load_cell.cpp):**
+
+1. **WiFi-Scan-Worker-Task** (`wifi_scan_worker`, Prio 2, Core 0): Führt
+   `WiFi.scanNetworks()` außerhalb von `async_tcp` aus. `api_wifi_scan` startet den
+   Worker per `xTaskNotifyGive()` und gibt sofort gecachte Ergebnisse zurück.
+   Beim ersten Scan-Request liefert die API `{"networks":[]}`, beim zweiten Aufruf
+   die echten Ergebnisse.
+
+2. **`vTaskSuspend`/`vTaskResume` entfernt** aus `load_cell_tare` und
+   `load_cell_calibrate`. Der I2C-Mutex serialisiert Task und Tare bereits korrekt;
+   beide teilen den Sample-Stream (NAU7802 DRDY wird erst beim Lesen der
+   ADC-Register gecleart). Die Tare dauert dadurch ggf. bis zu ~2 s statt ~1 s.
+
+3. **`loadcell_cmd_worker`-Task** (`lc_cmd`, Prio 3, Core 1, 2026-04-30 nachgezogen):
+   Nach dem Fix aus (2) blieb `load_cell_tare()` weiterhin direkt im `async_tcp`-Kontext
+   (WS-Handler + REST-API). Das 1–2 s Blockieren löste einen POWERON_RESET aus
+   (WDT-Abort). Fix: `loadcell_cmd_worker` führt `load_cell_tare()` und
+   `load_cell_calibrate()` außerhalb von `async_tcp` aus — identisches Muster zu
+   `datalog_start_worker` und `wifi_scan_worker`.
+
+**Aufrufsregel (ergänzt):** Alle blockierenden Operationen (SPI, I2C, WiFi-Scan)
+dürfen **nicht** direkt im `async_tcp`-Kontext (HTTP-Handler, WebSocket-Callback)
+aufgerufen werden. Muster: dedizierter Worker-Task analog `datalog_start_worker`,
+`wifi_scan_worker`, `loadcell_cmd_worker`.
+
+---
+
+## 13  Offene Punkte / TODOs
 
 - [ ] Abgleich mit bestehendem Code aus dem Marlin-ESP32-Projekt
 - [ ] Frontend-Design: Farbschema, Schriftart, responsive Breakpoints festlegen

@@ -350,20 +350,38 @@ Start/Stop, UART-Konfiguration und Events.
 
 ## 8  Software-Architektur
 
-### 8.1  FreeRTOS-Task
+### 8.1  FreeRTOS-Tasks
+
+**motor_mgr_task** — Befehlsverarbeitung
 
 | Eigenschaft       | Wert                              |
 | ----------------- | --------------------------------- |
-| Task-Name         | `motor_mgr_task`                  |
+| Task-Name         | `motor_mgr`                       |
 | Stack-Größe       | 4096 Byte                         |
-| Priorität         | 4 (mittel)                        |
-| Core-Affinität    | Kein Pinning (tskNO_AFFINITY)     |
+| Priorität         | 4 (TASK_PRIO_MOTOR)               |
+| Core-Affinität    | Core 1 (CORE_REALTIME)            |
 | Funktion          | Befehlsqueue abarbeiten           |
 
-Der Task wartet auf eine FreeRTOS-Queue (`motor_cmd_queue`), über die
+Der Task wartet auf eine FreeRTOS-Queue (`s_cmd_queue`), über die
 Bewegungsbefehle und Konfigurationsaufträge eingehen. Dadurch sind
 alle Zugriffe serialisiert — keine Race Conditions zwischen API-Aufrufen
 aus verschiedenen Tasks.
+
+**rmt_step_task** — Schrittausgabe
+
+| Eigenschaft       | Wert                              |
+| ----------------- | --------------------------------- |
+| Task-Name         | `rmt_step`                        |
+| Stack-Größe       | 4096 Byte                         |
+| Priorität         | 5 (TASK_PRIO_MOTOR + 1)           |
+| Core-Affinität    | Core 1 (CORE_REALTIME)            |
+| Funktion          | RMT-Blöcke senden, Semaphore warten |
+
+Wartet per `ulTaskNotifyTake` auf Start-Signal, sendet dann Blöcke von
+64 Steps per RMT und wartet nach jedem Block auf den ISR-Callback
+(binäre Semaphore). Timeout pro Block = Blockdauer + 500 ms Reserve
+(wird dynamisch aus `block × s_period_us` berechnet, um auch bei
+niedrigen Frequenzen < 62 Hz korrekt zu warten).
 
 ### 8.2  Befehlsqueue
 
@@ -671,13 +689,43 @@ Das `motor`-Component hat **keine Abhängigkeit** zum HTTP-Server.
 
 ---
 
-## 12  Offene Punkte / TODOs
+## 12  Änderungshistorie
 
-- [ ] Abgleich mit bestehendem Code aus dem Marlin-ESP32-Projekt
+### 2026-04-30 — Crash-Fix: rmt_step_task Stack-Overflow + Semaphore-Timeout
+
+**Problem:** Bei niedrigen Geschwindigkeiten (hier: 0,42 mm/s → 39 Hz,
+Periodendauer 25,6 ms/Step) crashte der ESP32 mit einem *Double Exception /
+Core 1 panic* kurz nach dem Bewegungsstart. Der Backtrace zeigte dieselben
+8 Stack-Frames in einer zirkulären Kette — klassisches Symptom für einen
+Stack-Overflow, bei dem die Frame-Pointer-Kette korrumpiert und kreisförmig wird.
+
+**Ursache 1 — Semaphore-Timeout zu kurz:**
+`rmt_step_task` wartete nach jedem 64-Step-Block mit festem Timeout 1000 ms
+auf den ISR-Callback. Bei 39 Hz dauert ein Block `64 × 25,6 ms = 1638 ms`.
+Der Timeout lief ab, der Loop brach ab, aber das RMT-Peripheral lief
+weiter — Semaphore-Zustand und `s_running`-Flag wurden inkonsistent.
+
+**Ursache 2 — Stack-Größe zu klein:**
+`rmt_step_task` war mit 2048 Byte Stack angelegt. Das ist zu knapp für
+`rmt_write_items` + `xSemaphoreTake` + lokalen Puffer (`rmt_item32_t[64]`
+= 256 Byte) + FreeRTOS-Overhead → Stack-Overflow bei länger laufenden Moves.
+
+**Ursache 3 — `portMAX_DELAY` durch `pdMS_TO_TICKS`:**
+`motor_rmt_wait(portMAX_DELAY)` übergab `0xFFFFFFFF` an `pdMS_TO_TICKS`,
+was zu einem Overflow führte. Zufällig harmlos (Ergebnis ≈ 4294 s), aber falsch.
+
+**Fixes (motor_rmt.cpp):**
+1. Block-Timeout dynamisch: `block_ms = block × s_period_us / 1000 + 500`
+2. `rmt_step_task` Stack: 2048 → 4096 Byte
+3. `motor_rmt_wait`: `portMAX_DELAY` direkt an `xSemaphoreTake` weitergeben
+
+---
+
+## 13  Offene Punkte / TODOs
+
 - [ ] Beschleunigungsrampen (Trapezprofil) — aktuell nur konstante Geschwindigkeit
 - [ ] StallGuard-Erkennung (TMC2208 hat kein StallGuard, ggf. TMC2209 evaluieren)
 - [ ] Maximale Geschwindigkeit und Beschleunigung per Kconfig begrenzen
 - [ ] Klären: Braucht das Modul einen Positions-Tracker (Schritte zählen)?
-- [ ] Single-Wire-UART implementieren oder 2-Wire beibehalten?
 - [ ] Web-UI-Modul als separate Spec schreiben
 
