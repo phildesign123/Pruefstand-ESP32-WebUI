@@ -36,6 +36,13 @@ static void emergency_stop(SafetyFault fault) {
     s_fault_code  = fault;
     portEXIT_CRITICAL(&s_mux);
     Serial.printf("[HOTEND] !!! NOTABSCHALTUNG !!! %s\n", safety_fault_string(fault));
+    if (fault == FAULT_SENSOR) {
+        Serial.printf("[HOTEND] MAX31865 fault=0x%02X raw=%u R=%.2f ohm T=%.2f C\n",
+                      sensor_get_fault_code(),
+                      (unsigned int)sensor_get_raw_rtd(),
+                      sensor_get_resistance(),
+                      s_current_temp);
+    }
 }
 
 void hotend_task(void *arg) {
