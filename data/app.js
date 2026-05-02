@@ -356,6 +356,8 @@ async function seqStart() {
   const body = {};
   const fn = document.getElementById('seq-filename').value.trim();
   if (fn) body.filename = fn;
+  const delay = parseInt(document.getElementById('seq-delay').value) || 0;
+  if (delay > 0) body.start_delay_s = delay;
   const r = await api('POST', '/api/sequence/start', body);
   if (r && !r.ok) toast('Fehler: ' + (r.error || 'unbekannt'));
   else { toast('Messreihe gestartet.'); await loadSequences(); }

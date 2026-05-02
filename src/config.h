@@ -87,8 +87,8 @@
 #define NAU7802_I2C_FREQ        100000   // 100 kHz (stabil bei langen Kabeln)
 #define LOAD_CELL_MEDIAN_SIZE   5              // (ungenutzt seit Filter-Entfernung)
 #define LOAD_CELL_AVG_SIZE      10             // (ungenutzt seit Filter-Entfernung)
-#define LOAD_CELL_TARE_SAMPLES  20             // 1 s bei 20 SPS
-#define LOAD_CELL_CAL_SAMPLES   20             // 1 s bei 20 SPS
+#define LOAD_CELL_TARE_SAMPLES  40             // 2 s bei 20 SPS
+#define LOAD_CELL_CAL_SAMPLES   40             // 2 s bei 20 SPS
 #define LOAD_CELL_HEATER_COMP   1100           // Raw-Counts Kompensation bei Duty=1.0 (Heater-Einstreuung)
 #define LOAD_CELL_HEATER_COMP_ENABLE 1         // 1 = Software-Kompensation aktiv, 0 = aus
 

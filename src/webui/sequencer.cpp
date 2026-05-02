@@ -18,6 +18,7 @@ static volatile bool s_stop_req      = false;
 static volatile float s_remaining_s  = 0.0f;
 static volatile bool s_move_queued   = false;  // Move bereits in Motor-Queue
 static volatile bool s_datalog_pending = false; // datalog_start() im Task ausführen
+static volatile uint32_t s_start_delay_s = 0;  // Sekunden Verzögerung vor Aufzeichnungsstart
 static char          s_start_filename[64] = {0};
 static portMUX_TYPE  s_mux           = portMUX_INITIALIZER_UNLOCKED;
 
@@ -28,13 +29,6 @@ static void sequencer_task(void *arg) {
             continue;
         }
 
-        // datalog_start() hier im eigenen Task statt im async_tcp-Kontext
-        if (s_datalog_pending) {
-            s_datalog_pending = false;
-            datalog_start(SEQ_LOG_INTERVAL_MS,
-                          s_start_filename[0] ? s_start_filename : nullptr);
-        }
-
         int idx;
         portENTER_CRITICAL(&s_mux);
         idx = s_active_idx;
@@ -43,9 +37,9 @@ static void sequencer_task(void *arg) {
         if (idx < 0 || idx >= s_seq_count) {
             s_state     = SEQ_DONE;
             s_active_idx = -1;
-            vTaskDelay(pdMS_TO_TICKS(2000));  // 2s Nachlauf für Messdaten
             datalog_stop();
             hotend_set_target(0);
+            s_start_delay_s = 0;
             Serial.println("[SEQ] Messreihe abgeschlossen.");
             s_state = SEQ_IDLE;
             continue;
@@ -88,8 +82,12 @@ static void sequencer_task(void *arg) {
             }
         }
         if (s_stop_req) {
-            motor_stop(); datalog_stop(); hotend_set_target(0);
+            motor_stop();
+            if (s_datalog_pending) s_datalog_pending = false;
+            else datalog_stop();
+            hotend_set_target(0);
             s_state = SEQ_IDLE; s_active_idx = -1; s_stop_req = false;
+            s_start_delay_s = 0;
             Serial.println("[SEQ] Gestoppt.");
             continue;
         }
@@ -113,7 +111,9 @@ static void sequencer_task(void *arg) {
                 if (xTaskGetTickCount() - t0 > pdMS_TO_TICKS(2000)) break;
             }
         }
-        // Warten bis Bewegung beendet ist, Restzeit aktualisieren
+
+        // Warten bis Bewegung beendet ist, Restzeit aktualisieren.
+        // Aufzeichnung startet sobald elapsed >= start_delay_s (0 = sofort).
         {
             unsigned long run_start = millis();
             uint32_t timeout_ms = (uint32_t)(seq.duration_s * 1000.0f + 5000);
@@ -122,15 +122,30 @@ static void sequencer_task(void *arg) {
                 float elapsed = (millis() - run_start) / 1000.0f;
                 s_remaining_s = seq.duration_s - elapsed;
                 if (s_remaining_s < 0) s_remaining_s = 0;
+                if (idx == 0 && s_datalog_pending && elapsed >= (float)s_start_delay_s) {
+                    s_datalog_pending = false;
+                    datalog_start(SEQ_LOG_INTERVAL_MS,
+                                  s_start_filename[0] ? s_start_filename : nullptr);
+                }
                 vTaskDelay(pdMS_TO_TICKS(100));
                 if (xTaskGetTickCount() - t0 > pdMS_TO_TICKS(timeout_ms)) break;
             }
             s_remaining_s = 0;
+            // Falls Verzögerung länger als Sequenzdauer: trotzdem starten (für Folgesequenzen)
+            if (idx == 0 && s_datalog_pending && !s_stop_req) {
+                s_datalog_pending = false;
+                datalog_start(SEQ_LOG_INTERVAL_MS,
+                              s_start_filename[0] ? s_start_filename : nullptr);
+            }
         }
 
         if (s_stop_req) {
-            motor_stop(); datalog_stop(); hotend_set_target(0);
+            motor_stop();
+            if (s_datalog_pending) s_datalog_pending = false;
+            else datalog_stop();
+            hotend_set_target(0);
             s_state = SEQ_IDLE; s_active_idx = -1; s_stop_req = false;
+            s_start_delay_s = 0;
             Serial.println("[SEQ] Gestoppt.");
             continue;
         }
@@ -194,12 +209,13 @@ bool sequencer_get(int i, Sequence *s) {
     *s = s_sequences[i]; return true;
 }
 
-bool sequencer_start(const char *filename) {
+bool sequencer_start(const char *filename, uint32_t start_delay_s) {
     if (s_state != SEQ_IDLE || s_seq_count == 0) return false;
-    s_stop_req    = false;
-    s_move_queued = false;
-    s_active_idx  = 0;
-    s_state       = SEQ_HEATING;
+    s_stop_req      = false;
+    s_move_queued   = false;
+    s_active_idx    = 0;
+    s_start_delay_s = start_delay_s;
+    s_state         = SEQ_HEATING;
 
     // Sequenz-Tabelle als Preamble in CSV schreiben
     char preamble[512];

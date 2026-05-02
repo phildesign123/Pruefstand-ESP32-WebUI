@@ -120,6 +120,11 @@
       <span class="setting-label">Dateiname:</span>
       <input type="text" id="seq-filename" placeholder="(optional)" style="flex:1;min-width:140px">
     </div>
+    <div class="setting-row" style="margin-bottom:10px">
+      <span class="setting-label">Aufzeichnungsverzögerung:</span>
+      <input type="number" id="seq-delay" min="0" max="3600" step="1" value="0" style="width:70px"> s
+      <span style="font-size:12px;color:var(--text-dim);margin-left:6px">(nach Motorstart der 1. Sequenz)</span>
+    </div>
     <table>
       <thead>
         <tr>

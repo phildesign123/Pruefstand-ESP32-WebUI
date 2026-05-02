@@ -534,6 +534,19 @@ letzten Sequenz — auch während der Aufheizphasen zwischen den Sequenzen.
 
 So sind die Temperaturrampen zwischen den Sequenzen ebenfalls dokumentiert.
 
+#### Aufzeichnungsverzögerung (`start_delay_s`)
+
+Über das UI-Feld „Aufzeichnungsverzögerung" kann eine Verzögerung in Sekunden
+konfiguriert werden. Bei `start_delay_s > 0` wird `datalog_start()` **nicht**
+sofort, sondern erst nach dem Motorstart der ersten Sequenz plus der
+konfigurierten Verzögerung aufgerufen. Das ermöglicht z. B. das Überspringen
+transienter Anlaufeffekte.
+
+- `start_delay_s == 0` (Default): Aufzeichnung startet sofort, inklusive Aufheizphase.
+- `start_delay_s > 0`: Aufzeichnung startet X Sekunden nach Motorstart Sequenz 1.
+
+Der Parameter wird im API-Body von `POST /api/sequence/start` als `start_delay_s` übergeben.
+
 > **Wichtig:** `datalog_start()` darf **nicht** im `async_tcp`-Kontext
 > (HTTP-Handler) aufgerufen werden, da die SPI-Mutex-Wartezeit und
 > SD-Kartenoperationen den Task-Watchdog auslösen können.
@@ -614,7 +627,7 @@ automatisch auf das höhere Intervall umgeschaltet.
 | POST    | `/api/sequence/reorder`   | Reihenfolge ändern        | `{order: [2, 0, 1]}`                |
 | DELETE  | `/api/sequence/<index>`   | Einzelne Sequenz löschen  | —                                    |
 | DELETE  | `/api/sequence`           | Alle Sequenzen löschen    | —                                    |
-| POST    | `/api/sequence/start`     | Messreihe starten         | —                                    |
+| POST    | `/api/sequence/start`     | Messreihe starten         | `{filename?: str, start_delay_s?: int}` |
 | POST    | `/api/sequence/stop`      | Messreihe abbrechen       | —                                    |
 
 ### 7.6  Messreihen-Presets (SD-Karte)

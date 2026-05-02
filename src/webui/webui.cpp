@@ -451,7 +451,8 @@ static void api_seq_add(AsyncWebServerRequest *req, JsonVariant &body) {
 
 static void api_seq_start(AsyncWebServerRequest *req, JsonVariant &body) {
     const char *fn = body["filename"] | (const char*)nullptr;
-    if (!sequencer_start(fn))
+    uint32_t delay_s = body["start_delay_s"] | (uint32_t)0;
+    if (!sequencer_start(fn, delay_s))
         req->send(400, "application/json", "{\"error\":\"cannot start\"}");
     else
         req->send(200, "application/json", "{\"ok\":true}");
